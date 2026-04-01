@@ -188,6 +188,13 @@ export async function GET(request: NextRequest) {
     const windSpeed = currentHourly?.windSpeed || "Unknown";
     const windDirection = currentHourly?.windDirection || "Unknown";
 
+    // Build ground-level entry and prepend to winds aloft
+    const groundWind = {
+      altitude: "Surface",
+      wind: `${windDirection} at ${windSpeed}`,
+    };
+    const windsAloftWithGround = [groundWind, ...(windsAloft || [])];
+
     // Convert visibility from meters to statute miles
     const visibilityMiles = currentVisibility
       ? (currentVisibility / 1609.34).toFixed(1)
@@ -232,7 +239,7 @@ export async function GET(request: NextRequest) {
         shortForecast: p.shortForecast,
         isDaytime: p.isDaytime,
       })),
-      windsAloft,
+      windsAloft: windsAloftWithGround,
     });
   } catch (err) {
     const message =
@@ -285,10 +292,11 @@ function parseWindsAloft(
       if (!raw || raw === "9900") return { altitude: alt, wind: "Light & Variable" };
       if (raw.length >= 4) {
         const dir = raw.substring(0, 2) + "0";
-        const speed = raw.substring(2, 4);
+        const speedKts = parseInt(raw.substring(2, 4));
+        const speedMph = Math.round(speedKts * 1.15078);
         return {
           altitude: alt,
-          wind: `${dir}° at ${parseInt(speed)} kts`,
+          wind: `${dir}° at ${speedMph} mph`,
         };
       }
       return { altitude: alt, wind: raw };
