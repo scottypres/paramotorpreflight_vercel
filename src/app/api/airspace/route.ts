@@ -1,15 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 
+interface ArcGISAttributes {
+  CLASS: string;
+  LOCAL_TYPE: string;
+  NAME: string;
+  UPPER_VAL: number;
+  LOWER_VAL: number;
+  UPPER_UOM: string;
+  LOWER_UOM: string;
+}
+
+interface ArcGISRing {
+  rings: number[][][];
+}
+
 interface ArcGISFeature {
-  attributes: {
-    CLASS: string;
-    LOCAL_TYPE: string;
-    NAME: string;
-    UPPER_VAL: number;
-    LOWER_VAL: number;
-    UPPER_UOM: string;
-    LOWER_UOM: string;
-  };
+  attributes: ArcGISAttributes;
+  geometry?: ArcGISRing;
 }
 
 interface ArcGISResponse {
@@ -27,14 +34,6 @@ interface AirspaceLayer {
   upperFt: number;
   touchesSurface: boolean;
   affectsParamotor: boolean;
-}
-
-function parseAltitude(val: number, uom: string): number {
-  // ArcGIS returns values in feet MSL or AGL depending on the field
-  // LOWER_VAL and UPPER_VAL are typically in feet (hundreds)
-  // Some are stored as raw feet, others as hundreds of feet
-  if (val >= 180 && uom === "MSL") return val * 100; // FL180 = 18000
-  return val;
 }
 
 function buildLayers(features: ArcGISFeature[]): AirspaceLayer[] {
@@ -61,11 +60,17 @@ function formatAltitude(ft: number, isSurface: boolean): string {
   return `${ft.toLocaleString()} ft`;
 }
 
+// Convert ArcGIS rings to GeoJSON polygon coordinates
+// ArcGIS uses [lon, lat], GeoJSON also uses [lon, lat], so no conversion needed
+function ringsToGeoJSON(rings: number[][][]): number[][][] {
+  return rings;
+}
+
 function getPartRuling(airspaceClass: string, touchesSurface: boolean) {
   switch (airspaceClass) {
     case "A":
       return {
-        canFly: true, // Class A is 18,000+, paramotors are never up there
+        canFly: true,
         restrictions:
           "Class A airspace (FL180+). Does not affect paramotor operations.",
         recommendation:
@@ -209,18 +214,24 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const geometry = JSON.stringify({
-      x: lon,
-      y: lat,
+    // Query a wider area (envelope) around the point so we get surrounding airspace
+    // for the map display — ~30nm in each direction
+    const bufferDeg = 0.5; // roughly 30nm
+    const envelope = JSON.stringify({
+      xmin: lon - bufferDeg,
+      ymin: lat - bufferDeg,
+      xmax: lon + bufferDeg,
+      ymax: lat + bufferDeg,
       spatialReference: { wkid: 4326 },
     });
 
     const params = new URLSearchParams({
-      geometry,
-      geometryType: "esriGeometryPoint",
+      geometry: envelope,
+      geometryType: "esriGeometryEnvelope",
       spatialRel: "esriSpatialRelIntersects",
       outFields: "CLASS,LOCAL_TYPE,NAME,UPPER_VAL,LOWER_VAL,UPPER_UOM,LOWER_UOM",
-      returnGeometry: "false",
+      returnGeometry: "true",
+      outSR: "4326",
       f: "json",
     });
 
@@ -236,6 +247,25 @@ export async function GET(request: NextRequest) {
     let usedFallback = false;
     let layers: AirspaceLayer[] = [];
 
+    // GeoJSON features for the map (all airspace in the area)
+    interface GeoJSONFeature {
+      type: "Feature";
+      properties: {
+        airspaceClass: string;
+        name: string;
+        floor: string;
+        ceiling: string;
+        lowerFt: number;
+        upperFt: number;
+        touchesSurface: boolean;
+      };
+      geometry: {
+        type: "Polygon";
+        coordinates: number[][][];
+      };
+    }
+    const mapFeatures: GeoJSONFeature[] = [];
+
     if (res.ok) {
       const data: ArcGISResponse = await res.json();
 
@@ -244,35 +274,78 @@ export async function GET(request: NextRequest) {
       }
 
       if (data.features && data.features.length > 0) {
-        layers = buildLayers(data.features);
+        // Build map features from ALL returned airspace (wider area)
+        for (const feat of data.features) {
+          if (feat.geometry?.rings) {
+            const lower = feat.attributes.LOWER_VAL || 0;
+            const upper = feat.attributes.UPPER_VAL || 0;
+            const touchesSurface = lower === 0 || feat.attributes.LOWER_UOM === "SFC";
 
-        // Sort layers by restrictiveness (most restrictive first)
-        const priority: Record<string, number> = {
-          B: 5, C: 4, D: 3, E: 2, A: 1, G: 0,
-        };
-        layers.sort(
-          (a, b) => (priority[b.airspaceClass] || 0) - (priority[a.airspaceClass] || 0)
-        );
+            // Skip Class A (FL180+) — not useful on the map for paramotors
+            if (feat.attributes.CLASS === "A") continue;
 
-        // Find the most restrictive layer that actually affects paramotor altitude
-        const paramotorLayers = layers.filter((l) => l.affectsParamotor);
+            mapFeatures.push({
+              type: "Feature",
+              properties: {
+                airspaceClass: feat.attributes.CLASS || "E",
+                name: feat.attributes.NAME || "",
+                floor: formatAltitude(lower, touchesSurface),
+                ceiling: formatAltitude(upper, false),
+                lowerFt: lower,
+                upperFt: upper,
+                touchesSurface,
+              },
+              geometry: {
+                type: "Polygon",
+                coordinates: ringsToGeoJSON(feat.geometry.rings),
+              },
+            });
+          }
+        }
 
-        if (paramotorLayers.length > 0) {
-          // The most restrictive layer touching the surface determines the ruling
-          const surfaceLayer = paramotorLayers.find((l) => l.touchesSurface);
-          const relevantLayer = surfaceLayer || paramotorLayers[0];
+        // Now do the point-in-polygon check for the user's exact location
+        // Filter to features that actually contain the user's point
+        const pointFeatures = data.features.filter((f) => {
+          if (!f.geometry?.rings) return false;
+          return isPointInPolygon(lat, lon, f.geometry.rings);
+        });
 
-          surfaceClass = relevantLayer.airspaceClass;
-          const ruling = getPartRuling(
-            relevantLayer.airspaceClass,
-            relevantLayer.touchesSurface
+        if (pointFeatures.length > 0) {
+          layers = buildLayers(pointFeatures);
+
+          const priority: Record<string, number> = {
+            B: 5, C: 4, D: 3, E: 2, A: 1, G: 0,
+          };
+          layers.sort(
+            (a, b) =>
+              (priority[b.airspaceClass] || 0) -
+              (priority[a.airspaceClass] || 0)
           );
-          canFly = ruling.canFly;
-          restrictions = ruling.restrictions;
-          recommendation = ruling.recommendation;
+
+          const paramotorLayers = layers.filter((l) => l.affectsParamotor);
+
+          if (paramotorLayers.length > 0) {
+            const surfaceLayer = paramotorLayers.find(
+              (l) => l.touchesSurface
+            );
+            const relevantLayer = surfaceLayer || paramotorLayers[0];
+
+            surfaceClass = relevantLayer.airspaceClass;
+            const ruling = getPartRuling(
+              relevantLayer.airspaceClass,
+              relevantLayer.touchesSurface
+            );
+            canFly = ruling.canFly;
+            restrictions = ruling.restrictions;
+            recommendation = ruling.recommendation;
+          } else {
+            surfaceClass = "G";
+            const ruling = getPartRuling("G", false);
+            canFly = ruling.canFly;
+            restrictions = ruling.restrictions;
+            recommendation = ruling.recommendation;
+          }
         } else {
-          // All layers are above paramotor altitude (e.g., only Class A at FL180+)
-          surfaceClass = "G";
           const ruling = getPartRuling("G", false);
           canFly = ruling.canFly;
           restrictions = ruling.restrictions;
@@ -301,7 +374,6 @@ export async function GET(request: NextRequest) {
       canFly,
       restrictions,
       recommendation,
-      // Full airspace stack so the UI can show all layers with altitudes
       layers: layers.map((l) => ({
         airspaceClass: l.airspaceClass,
         name: l.name,
@@ -312,6 +384,11 @@ export async function GET(request: NextRequest) {
         touchesSurface: l.touchesSurface,
         affectsParamotor: l.affectsParamotor,
       })),
+      // GeoJSON FeatureCollection for the map
+      mapGeoJSON: {
+        type: "FeatureCollection" as const,
+        features: mapFeatures,
+      },
       nearestAirport: airportInfo?.nearestAirport || null,
       distanceNm: airportInfo?.distanceNm || null,
       airports: airportInfo?.airports || [],
@@ -323,4 +400,29 @@ export async function GET(request: NextRequest) {
       err instanceof Error ? err.message : "Failed to check airspace";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+// Ray-casting point-in-polygon test
+function isPointInPolygon(
+  lat: number,
+  lon: number,
+  rings: number[][][]
+): boolean {
+  // Check the outer ring (first ring)
+  const ring = rings[0];
+  if (!ring) return false;
+
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0]; // lon
+    const yi = ring[i][1]; // lat
+    const xj = ring[j][0];
+    const yj = ring[j][1];
+
+    const intersect =
+      yi > lat !== yj > lat &&
+      lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
 }

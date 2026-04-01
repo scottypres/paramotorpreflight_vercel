@@ -1,6 +1,16 @@
 "use client";
 
 import { useState, FormEvent } from "react";
+import dynamic from "next/dynamic";
+
+const AirspaceMap = dynamic(() => import("@/components/AirspaceMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full rounded-xl border border-card-border bg-background flex items-center justify-center text-muted text-sm" style={{ height: "380px" }}>
+      Loading map...
+    </div>
+  ),
+});
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -48,6 +58,26 @@ interface AirspaceLayer {
   affectsParamotor: boolean;
 }
 
+interface AirspaceGeoJSON {
+  type: "FeatureCollection";
+  features: {
+    type: "Feature";
+    properties: {
+      airspaceClass: string;
+      name: string;
+      floor: string;
+      ceiling: string;
+      lowerFt: number;
+      upperFt: number;
+      touchesSurface: boolean;
+    };
+    geometry: {
+      type: "Polygon";
+      coordinates: number[][][];
+    };
+  }[];
+}
+
 interface AirspaceData {
   surfaceClass: string;
   canFly: boolean;
@@ -56,6 +86,7 @@ interface AirspaceData {
   restrictions: string;
   recommendation: string;
   layers: AirspaceLayer[];
+  mapGeoJSON: AirspaceGeoJSON;
   airports: { ident: string; name: string; distance: number }[];
   note: string;
   usedFallback: boolean;
@@ -551,6 +582,24 @@ export default function Home() {
                       </span>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Airspace Map */}
+              {airspace.mapGeoJSON && weather && (
+                <div className="mt-4">
+                  <p className="text-xs text-muted mb-2 font-medium uppercase tracking-wide">
+                    Airspace Map
+                  </p>
+                  <AirspaceMap
+                    lat={weather.location.lat}
+                    lon={weather.location.lon}
+                    geoJSON={airspace.mapGeoJSON}
+                  />
+                  <p className="text-xs text-muted mt-2">
+                    Solid shapes = extends to surface. Dashed shapes = shelves/upper layers (you can fly below them).
+                    Click any shape to see its class and altitude range.
+                  </p>
                 </div>
               )}
 
