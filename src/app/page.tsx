@@ -738,11 +738,14 @@ export default function Home() {
                   </p>
                   <div className="space-y-2">
                     {airspace.layers.map((layer, i) => {
-                      const isRestricted =
-                        layer.touchesSurface &&
-                        ["B", "C", "D"].includes(layer.airspaceClass);
-                      const bgColor = isRestricted
+                      const restricted =
+                        ["B", "C", "D", "P", "R"].includes(layer.airspaceClass);
+                      const caution =
+                        ["MOA", "W", "A"].includes(layer.airspaceClass);
+                      const bgColor = restricted
                         ? "bg-danger/10 border-danger/20"
+                        : caution
+                        ? "bg-orange/10 border-orange/20"
                         : layer.affectsParamotor
                         ? "bg-warn/10 border-warn/20"
                         : "bg-background border-card-border";
@@ -755,8 +758,10 @@ export default function Home() {
                             <div className="flex items-center gap-2">
                               <span
                                 className={`font-black text-lg ${
-                                  isRestricted
+                                  restricted
                                     ? "text-danger"
+                                    : caution
+                                    ? "text-orange"
                                     : layer.affectsParamotor
                                     ? "text-warn"
                                     : "text-muted"

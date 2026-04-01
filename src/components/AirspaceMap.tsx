@@ -31,13 +31,20 @@ interface AirspaceGeoJSON {
 
 // Part 103 ultralight rules:
 // Class G: Fly freely — uncontrolled airspace, no authorization needed
-// Class E: Fly freely — but must meet VFR weather minimums (3mi vis, cloud clearance)
-// Class D: RESTRICTED — need two-way radio communication with tower
-// Class C: RESTRICTED — need two-way radio communication with approach
-// Class B: RESTRICTED — prohibited for Part 103 ultralights
-// Class A: 18,000ft+ — irrelevant for paramotors
+// Part 103 rules:
+// B, C, D: RESTRICTED — need authorization/communication
+// P (Prohibited): NO flight allowed
+// R (Restricted): NO flight during active times
+// MOA: Legal but dangerous (military training)
+// W (Warning): Legal but hazardous
+// A (Alert): Legal, be vigilant
+// G: Fly freely
 function isRestricted(airspaceClass: string): boolean {
-  return ["B", "C", "D"].includes(airspaceClass);
+  return ["B", "C", "D", "P", "R"].includes(airspaceClass);
+}
+
+function isCaution(airspaceClass: string): boolean {
+  return ["MOA", "W", "A"].includes(airspaceClass);
 }
 
 function getLayerStyle(props: AirspaceFeatureProperties): {
@@ -47,10 +54,66 @@ function getLayerStyle(props: AirspaceFeatureProperties): {
   weight: number;
   dashArray?: string;
 } {
-  const restricted = isRestricted(props.airspaceClass);
+  const cls = props.airspaceClass;
+
+  // Prohibited — solid red, high visibility
+  if (cls === "P") {
+    return {
+      color: "#dc2626",
+      fillColor: "#dc2626",
+      fillOpacity: 0.3,
+      weight: 3,
+    };
+  }
+
+  // Restricted — red hatched
+  if (cls === "R") {
+    return {
+      color: "#ef4444",
+      fillColor: "#ef4444",
+      fillOpacity: 0.2,
+      weight: 2,
+      dashArray: "6,3",
+    };
+  }
+
+  // MOA — orange
+  if (cls === "MOA") {
+    return {
+      color: "#f97316",
+      fillColor: "#f97316",
+      fillOpacity: 0.12,
+      weight: 2,
+      dashArray: "10,5",
+    };
+  }
+
+  // Warning — yellow/orange
+  if (cls === "W") {
+    return {
+      color: "#eab308",
+      fillColor: "#eab308",
+      fillOpacity: 0.12,
+      weight: 2,
+      dashArray: "8,4",
+    };
+  }
+
+  // Alert — yellow
+  if (cls === "A" && !["B", "C", "D"].includes(cls)) {
+    return {
+      color: "#facc15",
+      fillColor: "#facc15",
+      fillOpacity: 0.1,
+      weight: 1.5,
+      dashArray: "6,6",
+    };
+  }
+
+  // Class B, C, D (controlled airports)
+  const restricted = isRestricted(cls);
 
   if (props.touchesSurface) {
-    // Surface-level: solid borders, higher opacity
     return {
       color: restricted ? "#ef4444" : "#22c55e",
       fillColor: restricted ? "#ef4444" : "#22c55e",
@@ -59,7 +122,7 @@ function getLayerStyle(props: AirspaceFeatureProperties): {
     };
   }
 
-  // Shelves / upper layers: dashed borders, lower opacity
+  // Shelves / upper layers: dashed, lower opacity
   return {
     color: restricted ? "#f87171" : "#4ade80",
     fillColor: restricted ? "#f87171" : "#4ade80",
@@ -95,23 +158,41 @@ function isPointInFeature(lat: number, lon: number, feature: AirspaceFeature): b
 function buildPopupHTML(features: AirspaceFeatureProperties[]): string {
   if (features.length === 0) return "";
 
+  // SUA type labels
+  const suaLabels: Record<string, string> = {
+    P: "Prohibited",
+    R: "Restricted",
+    MOA: "MOA",
+    W: "Warning",
+    A: "Alert",
+    NSA: "Nat. Security",
+  };
+
   const rows = features
     .map((p) => {
       const restricted = isRestricted(p.airspaceClass);
-      const statusColor = restricted ? "#ef4444" : "#22c55e";
-      const statusText = restricted ? "RESTRICTED" : "OK to fly";
-      const label = p.touchesSurface ? "Surface" : "Shelf";
-      // Build the identifier/name line
-      // If we have an ICAO code, show it prominently. Otherwise just show the name.
+      const caution = isCaution(p.airspaceClass);
+      const statusColor = restricted ? "#ef4444" : caution ? "#f97316" : "#22c55e";
+      const statusText = restricted
+        ? (p.airspaceClass === "P" ? "PROHIBITED" : "RESTRICTED")
+        : caution
+        ? "CAUTION"
+        : "OK to fly";
+
+      const isSUA = !!suaLabels[p.airspaceClass];
+      const label = isSUA
+        ? suaLabels[p.airspaceClass]
+        : p.touchesSurface ? "Surface" : "Shelf";
+      const classLabel = isSUA
+        ? p.airspaceClass
+        : `Class ${p.airspaceClass}`;
+
       let nameLine = "";
       if (p.ident && p.name && p.name !== p.ident) {
-        // Have both code and name: "KATL — Atlanta Class B"
         nameLine = `<strong>${p.ident}</strong> &mdash; ${p.name}`;
       } else if (p.ident) {
-        // Only code
         nameLine = `<strong>${p.ident}</strong>`;
       } else if (p.name) {
-        // Only name (common for Class E)
         nameLine = p.name;
       }
 
@@ -122,7 +203,7 @@ function buildPopupHTML(features: AirspaceFeatureProperties[]): string {
               display:inline-block;width:10px;height:10px;border-radius:2px;
               background:${statusColor};
             "></span>
-            <strong style="font-size:15px;">Class ${p.airspaceClass}</strong>
+            <strong style="font-size:15px;">${classLabel}</strong>
             <span style="font-size:11px;opacity:0.5;">${label}</span>
           </div>
           ${nameLine ? `<div style="font-size:12px;opacity:0.85;margin-left:16px;">${nameLine}</div>` : ""}
@@ -285,53 +366,33 @@ export default function AirspaceMap({ lat, lon, geoJSON }: AirspaceMapProps) {
       {/* Legend */}
       <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-3 text-xs text-muted">
         <span className="flex items-center gap-1.5">
-          <span
-            className="inline-block w-3 h-3 rounded-sm border-2"
-            style={{
-              backgroundColor: "rgba(239,68,68,0.22)",
-              borderColor: "#ef4444",
-            }}
-          />
-          Restricted (B/C/D) — surface
+          <span className="inline-block w-3 h-3 rounded-sm border-2"
+            style={{ backgroundColor: "rgba(220,38,38,0.3)", borderColor: "#dc2626" }} />
+          Prohibited
         </span>
         <span className="flex items-center gap-1.5">
-          <span
-            className="inline-block w-3 h-3 rounded-sm border border-dashed"
-            style={{
-              backgroundColor: "rgba(248,113,113,0.10)",
-              borderColor: "#f87171",
-            }}
-          />
-          Restricted — shelf/upper
+          <span className="inline-block w-3 h-3 rounded-sm border-2"
+            style={{ backgroundColor: "rgba(239,68,68,0.22)", borderColor: "#ef4444" }} />
+          Restricted (B/C/D/R)
         </span>
         <span className="flex items-center gap-1.5">
-          <span
-            className="inline-block w-3 h-3 rounded-sm border-2"
-            style={{
-              backgroundColor: "rgba(34,197,94,0.15)",
-              borderColor: "#22c55e",
-            }}
-          />
-          Flyable (E/G) — surface
+          <span className="inline-block w-3 h-3 rounded-sm border border-dashed"
+            style={{ backgroundColor: "rgba(249,115,22,0.12)", borderColor: "#f97316" }} />
+          MOA
         </span>
         <span className="flex items-center gap-1.5">
-          <span
-            className="inline-block w-3 h-3 rounded-sm border border-dashed"
-            style={{
-              backgroundColor: "rgba(74,222,128,0.07)",
-              borderColor: "#4ade80",
-            }}
-          />
-          Flyable — shelf/upper
+          <span className="inline-block w-3 h-3 rounded-sm border border-dashed"
+            style={{ backgroundColor: "rgba(234,179,8,0.12)", borderColor: "#eab308" }} />
+          Warning / Alert
         </span>
         <span className="flex items-center gap-1.5">
-          <span
-            className="inline-block w-2.5 h-2.5 rounded-full border-2"
-            style={{
-              backgroundColor: "#38bdf8",
-              borderColor: "#fff",
-            }}
-          />
+          <span className="inline-block w-3 h-3 rounded-sm border-2"
+            style={{ backgroundColor: "rgba(34,197,94,0.15)", borderColor: "#22c55e" }} />
+          Flyable
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-2.5 h-2.5 rounded-full border-2"
+            style={{ backgroundColor: "#38bdf8", borderColor: "#fff" }} />
           You
         </span>
       </div>
