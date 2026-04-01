@@ -37,16 +37,28 @@ interface WeatherData {
   windsAloft: { altitude: string; wind: string }[] | null;
 }
 
-interface AirspaceData {
+interface AirspaceLayer {
   airspaceClass: string;
+  name: string;
+  floor: string;
+  ceiling: string;
+  lowerFt: number;
+  upperFt: number;
+  touchesSurface: boolean;
+  affectsParamotor: boolean;
+}
+
+interface AirspaceData {
+  surfaceClass: string;
   canFly: boolean;
   nearestAirport: string | null;
   distanceNm: number | null;
-  description: string;
   restrictions: string;
   recommendation: string;
+  layers: AirspaceLayer[];
   airports: { ident: string; name: string; distance: number }[];
   note: string;
+  usedFallback: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -422,6 +434,7 @@ export default function Home() {
 
             {/* Airspace Section */}
             <SectionCard title="Airspace Classification" icon="🗺️" delay={100}>
+              {/* Surface class summary */}
               <div
                 className={`rounded-xl p-4 mb-4 ${
                   airspace.canFly
@@ -435,10 +448,12 @@ export default function Home() {
                       airspace.canFly ? "text-safe" : "text-danger"
                     }`}
                   >
-                    {airspace.airspaceClass}
+                    {airspace.surfaceClass}
                   </span>
                   <div>
-                    <p className="font-semibold">{airspace.description}</p>
+                    <p className="font-semibold">
+                      Class {airspace.surfaceClass} at your location
+                    </p>
                     <p
                       className={`text-sm ${
                         airspace.canFly ? "text-safe" : "text-danger"
@@ -451,6 +466,65 @@ export default function Home() {
                   </div>
                 </div>
               </div>
+
+              {/* Airspace layers stack */}
+              {airspace.layers.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-xs text-muted mb-2 font-medium uppercase tracking-wide">
+                    Airspace Layers Above You
+                  </p>
+                  <div className="space-y-2">
+                    {airspace.layers.map((layer, i) => {
+                      const isRestricted =
+                        layer.touchesSurface &&
+                        ["B", "C", "D"].includes(layer.airspaceClass);
+                      const bgColor = isRestricted
+                        ? "bg-danger/10 border-danger/20"
+                        : layer.affectsParamotor
+                        ? "bg-warn/10 border-warn/20"
+                        : "bg-background border-card-border";
+                      return (
+                        <div
+                          key={i}
+                          className={`rounded-lg p-3 border text-sm ${bgColor}`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`font-black text-lg ${
+                                  isRestricted
+                                    ? "text-danger"
+                                    : layer.affectsParamotor
+                                    ? "text-warn"
+                                    : "text-muted"
+                                }`}
+                              >
+                                {layer.airspaceClass}
+                              </span>
+                              <span className="text-muted">
+                                {layer.name || `Class ${layer.airspaceClass}`}
+                              </span>
+                            </div>
+                            <span className="font-mono text-xs text-muted">
+                              {layer.floor} &ndash; {layer.ceiling}
+                            </span>
+                          </div>
+                          {layer.affectsParamotor && (
+                            <p className="text-xs mt-1 text-muted">
+                              {layer.touchesSurface
+                                ? "Extends to the surface"
+                                : `Floor at ${layer.floor} — fly below this`}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-muted mt-2">
+                    Only layers reaching the surface or below ~1,500 ft affect paramotor operations.
+                  </p>
+                </div>
+              )}
 
               <DataRow label="Restrictions" value={airspace.restrictions} />
               {airspace.nearestAirport && (

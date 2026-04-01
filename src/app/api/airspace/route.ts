@@ -7,6 +7,8 @@ interface ArcGISFeature {
     NAME: string;
     UPPER_VAL: number;
     LOWER_VAL: number;
+    UPPER_UOM: string;
+    LOWER_UOM: string;
   };
 }
 
@@ -15,64 +17,127 @@ interface ArcGISResponse {
   error?: { message: string };
 }
 
-const CLASS_PRIORITY: Record<string, number> = {
-  A: 6,
-  B: 5,
-  C: 4,
-  D: 3,
-  E: 2,
-  G: 1,
-};
+// Typical paramotor operating ceiling in feet AGL
+const PARAMOTOR_MAX_ALT = 1500;
 
-function getPartRuling(airspaceClass: string, lowerVal: number) {
+interface AirspaceLayer {
+  airspaceClass: string;
+  name: string;
+  lowerFt: number;
+  upperFt: number;
+  touchesSurface: boolean;
+  affectsParamotor: boolean;
+}
+
+function parseAltitude(val: number, uom: string): number {
+  // ArcGIS returns values in feet MSL or AGL depending on the field
+  // LOWER_VAL and UPPER_VAL are typically in feet (hundreds)
+  // Some are stored as raw feet, others as hundreds of feet
+  if (val >= 180 && uom === "MSL") return val * 100; // FL180 = 18000
+  return val;
+}
+
+function buildLayers(features: ArcGISFeature[]): AirspaceLayer[] {
+  return features.map((f) => {
+    const lower = f.attributes.LOWER_VAL || 0;
+    const upper = f.attributes.UPPER_VAL || 0;
+    const touchesSurface = lower === 0 || f.attributes.LOWER_UOM === "SFC";
+    const affectsParamotor = touchesSurface || lower < PARAMOTOR_MAX_ALT;
+
+    return {
+      airspaceClass: f.attributes.CLASS || "E",
+      name: f.attributes.NAME || "",
+      lowerFt: lower,
+      upperFt: upper,
+      touchesSurface,
+      affectsParamotor,
+    };
+  });
+}
+
+function formatAltitude(ft: number, isSurface: boolean): string {
+  if (isSurface || ft === 0) return "Surface";
+  if (ft >= 18000) return `FL${ft / 100}`;
+  return `${ft.toLocaleString()} ft`;
+}
+
+function getPartRuling(airspaceClass: string, touchesSurface: boolean) {
   switch (airspaceClass) {
     case "A":
       return {
-        canFly: false,
+        canFly: true, // Class A is 18,000+, paramotors are never up there
         restrictions:
-          "Class A airspace (18,000 ft+). Not relevant for paramotors but shown for reference.",
-        recommendation: "Class A starts at 18,000 ft MSL. Paramotors operate well below this.",
+          "Class A airspace (FL180+). Does not affect paramotor operations.",
+        recommendation:
+          "Class A starts at 18,000 ft MSL. Paramotors operate well below this. No restriction on your flight.",
       };
     case "B":
-      return {
-        canFly: false,
-        restrictions:
-          "DO NOT FLY HERE. Part 103 ultralights are PROHIBITED from Class B airspace. ATC clearance is required for all aircraft, and it is rarely granted to ultralights.",
-        recommendation:
-          "Move to a location outside the Class B boundaries shown on your VFR sectional chart. Class B airspace surrounds the nation's busiest airports.",
-      };
-    case "C":
-      return {
-        canFly: false,
-        restrictions:
-          "Part 103 ultralights must not enter Class C airspace without establishing two-way radio communication with ATC. Most paramotors do not have radios.",
-        recommendation:
-          "Avoid this area unless you have a radio and have contacted approach control. Find a location outside the Class C ring.",
-      };
-    case "D":
-      return {
-        canFly: false,
-        restrictions:
-          "Part 103 ultralights must establish two-way communication with the control tower before entering Class D airspace.",
-        recommendation:
-          "If the tower is active, you need radio communication. When the tower is closed, Class D typically reverts to Class E or G. Check tower hours.",
-      };
-    case "E":
-      if (lowerVal === 0) {
+      if (touchesSurface) {
         return {
-          canFly: true,
+          canFly: false,
           restrictions:
-            "Class E surface area. Part 103 ultralights MAY fly here. VFR weather minimums: 3 statute miles visibility, 500 ft below clouds, 1000 ft above, 2000 ft horizontal.",
+            "DO NOT FLY HERE. You are within a Class B surface area. Part 103 ultralights are PROHIBITED from Class B airspace.",
           recommendation:
-            "You can fly here under Part 103 rules, but you must meet controlled airspace VFR weather minimums. Be aware of instrument traffic in the area.",
+            "Move to a location outside the Class B boundaries. Check your VFR sectional chart for exact boundaries.",
         };
       }
       return {
         canFly: true,
         restrictions:
-          "Class E airspace (starts above surface). Part 103 ultralights can fly below the Class E floor under uncontrolled (Class G) rules. Above the floor, controlled airspace VFR minimums apply.",
+          "A Class B shelf exists above you but does NOT extend to the surface here. You can fly BELOW the shelf floor.",
         recommendation:
-          "Good for paramotor flying! You're in Class G at the surface with Class E above. Standard VFR rules apply.",
+          "You are under a Class B shelf. Stay below the shelf floor altitude shown above. Check your VFR sectional for the exact shelf altitude at this location.",
+      };
+    case "C":
+      if (touchesSurface) {
+        return {
+          canFly: false,
+          restrictions:
+            "You are within the Class C surface area. Part 103 ultralights must establish two-way radio communication with ATC before entering.",
+          recommendation:
+            "Avoid this area unless you have a radio and have contacted approach control. Move outside the Class C inner ring.",
+        };
+      }
+      return {
+        canFly: true,
+        restrictions:
+          "A Class C shelf exists above you but does NOT extend to the surface here. You can fly BELOW the shelf floor.",
+        recommendation:
+          "You are under a Class C shelf. Stay below the shelf floor altitude. The surface airspace here is likely Class G (uncontrolled).",
+      };
+    case "D":
+      if (touchesSurface) {
+        return {
+          canFly: false,
+          restrictions:
+            "You are within Class D airspace (towered airport). Part 103 ultralights must establish two-way communication with the tower.",
+          recommendation:
+            "If the tower is active, you need radio communication. When the tower is closed, this reverts to Class E or G. Check tower hours.",
+        };
+      }
+      return {
+        canFly: true,
+        restrictions:
+          "Class D airspace exists above you but does not reach the surface at your location.",
+        recommendation:
+          "Stay below the Class D floor altitude. The surface airspace here is likely Class E or G.",
+      };
+    case "E":
+      if (touchesSurface) {
+        return {
+          canFly: true,
+          restrictions:
+            "Class E surface area. Part 103 ultralights MAY fly here. You must meet controlled airspace VFR weather minimums: 3 mi visibility, 500 ft below / 1000 ft above / 2000 ft horizontal from clouds.",
+          recommendation:
+            "You can fly here under Part 103. Be aware of instrument traffic. Stricter weather minimums apply compared to Class G.",
+        };
+      }
+      return {
+        canFly: true,
+        restrictions:
+          "Class E begins above the surface here. Below the Class E floor you are in Class G (uncontrolled). Above the floor, controlled VFR weather minimums apply.",
+        recommendation:
+          "Good for paramotor flying! You're in Class G at the surface. If you climb above the Class E floor, controlled airspace weather minimums kick in.",
       };
     default:
       return {
@@ -80,7 +145,7 @@ function getPartRuling(airspaceClass: string, lowerVal: number) {
         restrictions:
           "Class G uncontrolled airspace. No ATC authorization needed. Standard Part 103 rules apply.",
         recommendation:
-          "Great for paramotor flying! Maintain at least 1 statute mile visibility and stay clear of clouds (uncontrolled airspace minimums).",
+          "Great for paramotor flying! Maintain at least 1 statute mile visibility and stay clear of clouds.",
       };
   }
 }
@@ -95,7 +160,6 @@ async function fallbackAirportLookup(lat: number, lon: number) {
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0) return null;
 
-    // Find nearest
     let minDist = Infinity;
     let nearest: { icaoId: string; name: string; lat: number; lon: number } | null = null;
     for (const a of data) {
@@ -105,16 +169,28 @@ async function fallbackAirportLookup(lat: number, lon: number) {
         nearest = a;
       }
     }
-    const distNm = minDist * 60; // rough conversion
+    const distNm = minDist * 60;
 
     return {
       nearestAirport: nearest ? `${nearest.name} (${nearest.icaoId})` : null,
       distanceNm: Math.round(distNm * 10) / 10,
-      airports: data.slice(0, 5).map((a: { icaoId: string; name: string; lat: number; lon: number }) => ({
-        ident: a.icaoId,
-        name: a.name,
-        distance: Math.round(Math.sqrt((a.lat - lat) ** 2 + (a.lon - lon) ** 2) * 60 * 10) / 10,
-      })),
+      airports: data
+        .slice(0, 5)
+        .map(
+          (a: {
+            icaoId: string;
+            name: string;
+            lat: number;
+            lon: number;
+          }) => ({
+            ident: a.icaoId,
+            name: a.name,
+            distance:
+              Math.round(
+                Math.sqrt((a.lat - lat) ** 2 + (a.lon - lon) ** 2) * 60 * 10
+              ) / 10,
+          })
+        ),
     };
   } catch {
     return null;
@@ -133,7 +209,6 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Query the FAA ArcGIS Feature Service for Class Airspace
     const geometry = JSON.stringify({
       x: lon,
       y: lat,
@@ -144,7 +219,7 @@ export async function GET(request: NextRequest) {
       geometry,
       geometryType: "esriGeometryPoint",
       spatialRel: "esriSpatialRelIntersects",
-      outFields: "CLASS,LOCAL_TYPE,NAME,UPPER_VAL,LOWER_VAL",
+      outFields: "CLASS,LOCAL_TYPE,NAME,UPPER_VAL,LOWER_VAL,UPPER_UOM,LOWER_UOM",
       returnGeometry: "false",
       f: "json",
     });
@@ -154,14 +229,12 @@ export async function GET(request: NextRequest) {
       headers: { Accept: "application/json" },
     });
 
-    let airspaceClass = "G";
-    let description = "Class G - Uncontrolled Airspace";
-    let airspaceName = "";
-    let lowerVal = 0;
+    let surfaceClass = "G";
     let canFly = true;
     let restrictions = "";
     let recommendation = "";
     let usedFallback = false;
+    let layers: AirspaceLayer[] = [];
 
     if (res.ok) {
       const data: ArcGISResponse = await res.json();
@@ -171,38 +244,49 @@ export async function GET(request: NextRequest) {
       }
 
       if (data.features && data.features.length > 0) {
-        // Find the most restrictive airspace class at this point
-        let mostRestrictive = data.features[0];
-        for (const feat of data.features) {
-          const currentPriority =
-            CLASS_PRIORITY[feat.attributes.CLASS] || 0;
-          const bestPriority =
-            CLASS_PRIORITY[mostRestrictive.attributes.CLASS] || 0;
-          if (currentPriority > bestPriority) {
-            mostRestrictive = feat;
-          }
+        layers = buildLayers(data.features);
+
+        // Sort layers by restrictiveness (most restrictive first)
+        const priority: Record<string, number> = {
+          B: 5, C: 4, D: 3, E: 2, A: 1, G: 0,
+        };
+        layers.sort(
+          (a, b) => (priority[b.airspaceClass] || 0) - (priority[a.airspaceClass] || 0)
+        );
+
+        // Find the most restrictive layer that actually affects paramotor altitude
+        const paramotorLayers = layers.filter((l) => l.affectsParamotor);
+
+        if (paramotorLayers.length > 0) {
+          // The most restrictive layer touching the surface determines the ruling
+          const surfaceLayer = paramotorLayers.find((l) => l.touchesSurface);
+          const relevantLayer = surfaceLayer || paramotorLayers[0];
+
+          surfaceClass = relevantLayer.airspaceClass;
+          const ruling = getPartRuling(
+            relevantLayer.airspaceClass,
+            relevantLayer.touchesSurface
+          );
+          canFly = ruling.canFly;
+          restrictions = ruling.restrictions;
+          recommendation = ruling.recommendation;
+        } else {
+          // All layers are above paramotor altitude (e.g., only Class A at FL180+)
+          surfaceClass = "G";
+          const ruling = getPartRuling("G", false);
+          canFly = ruling.canFly;
+          restrictions = ruling.restrictions;
+          recommendation = ruling.recommendation;
         }
-
-        airspaceClass = mostRestrictive.attributes.CLASS || "E";
-        airspaceName = mostRestrictive.attributes.NAME || "";
-        lowerVal = mostRestrictive.attributes.LOWER_VAL || 0;
-        description = `Class ${airspaceClass}${airspaceName ? ` - ${airspaceName}` : ""}`;
-
-        const ruling = getPartRuling(airspaceClass, lowerVal);
-        canFly = ruling.canFly;
-        restrictions = ruling.restrictions;
-        recommendation = ruling.recommendation;
       } else {
-        // No airspace features = Class G
-        const ruling = getPartRuling("G", 0);
+        const ruling = getPartRuling("G", false);
         canFly = ruling.canFly;
         restrictions = ruling.restrictions;
         recommendation = ruling.recommendation;
       }
     } else {
-      // ArcGIS unavailable, use fallback
       usedFallback = true;
-      const ruling = getPartRuling("G", 0);
+      const ruling = getPartRuling("G", false);
       canFly = ruling.canFly;
       restrictions = ruling.restrictions;
       recommendation =
@@ -210,19 +294,26 @@ export async function GET(request: NextRequest) {
         ruling.recommendation;
     }
 
-    // Also get nearby airports for reference
     const airportInfo = await fallbackAirportLookup(lat, lon);
 
     return NextResponse.json({
-      airspaceClass,
+      surfaceClass,
       canFly,
-      description,
-      airspaceName,
-      lowerVal,
-      nearestAirport: airportInfo?.nearestAirport || null,
-      distanceNm: airportInfo?.distanceNm || null,
       restrictions,
       recommendation,
+      // Full airspace stack so the UI can show all layers with altitudes
+      layers: layers.map((l) => ({
+        airspaceClass: l.airspaceClass,
+        name: l.name,
+        floor: formatAltitude(l.lowerFt, l.touchesSurface),
+        ceiling: formatAltitude(l.upperFt, false),
+        lowerFt: l.lowerFt,
+        upperFt: l.upperFt,
+        touchesSurface: l.touchesSurface,
+        affectsParamotor: l.affectsParamotor,
+      })),
+      nearestAirport: airportInfo?.nearestAirport || null,
+      distanceNm: airportInfo?.distanceNm || null,
       airports: airportInfo?.airports || [],
       usedFallback,
       note: "This is based on FAA airspace data. ALWAYS verify on a current VFR Sectional Chart before flying. Check TFRs at tfr.faa.gov.",
