@@ -246,21 +246,16 @@ export default function AirspaceMap({ lat, lon, geoJSON }: AirspaceMapProps) {
       .addTo(map)
       .bindPopup("Your Location");
 
-    // Fit bounds
-    if (geoJSON.features.length > 0) {
-      try {
-        const allLayers = L.geoJSON({
-          type: "FeatureCollection",
-          features: sortedFeatures,
-        } as GeoJSON.FeatureCollection);
-        const bounds = allLayers.getBounds();
-        if (bounds.isValid()) {
-          bounds.extend([lat, lon]);
-          map.fitBounds(bounds, { padding: [30, 30], maxZoom: 11 });
-        }
-      } catch {
-        map.setView([lat, lon], 10);
-      }
+    // Zoom to ~10 mile diameter around user location
+    // 5 mile radius ≈ 8047m. Use fitBounds with a circle's bounding box.
+    const fiveMilesInDeg = 5 / 69; // ~0.0725 degrees
+    map.fitBounds(
+      [
+        [lat - fiveMilesInDeg, lon - fiveMilesInDeg / Math.cos((lat * Math.PI) / 180)],
+        [lat + fiveMilesInDeg, lon + fiveMilesInDeg / Math.cos((lat * Math.PI) / 180)],
+      ],
+      { padding: [10, 10] }
+    );
     }
 
     return () => {
