@@ -322,7 +322,7 @@ function FuelMixChart() {
 /* ------------------------------------------------------------------ */
 
 export default function Home() {
-  const [zip, setZip] = useState("");
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [locating, setLocating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -380,11 +380,17 @@ export default function Home() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!/^\d{5}$/.test(zip)) {
-      setError("Please enter a valid 5-digit zip code");
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setError("Please enter a location");
       return;
     }
-    fetchData(`/api/weather?zip=${zip}`);
+    // If it looks like a zip code, use the zip param; otherwise use freeform query
+    if (/^\d{5}$/.test(trimmed)) {
+      fetchData(`/api/weather?zip=${trimmed}`);
+    } else {
+      fetchData(`/api/weather?q=${encodeURIComponent(trimmed)}`);
+    }
   }
 
   function handleUseLocation() {
@@ -452,27 +458,24 @@ export default function Home() {
           <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1">
               <label
-                htmlFor="zip"
+                htmlFor="location"
                 className="block text-sm font-medium text-muted mb-1"
               >
-                Enter your zip code to check flying conditions
+                Enter a zip code, city, or place name to check flying conditions
               </label>
               <input
-                id="zip"
+                id="location"
                 type="text"
-                inputMode="numeric"
-                pattern="[0-9]{5}"
-                maxLength={5}
-                placeholder="e.g. 32003"
-                value={zip}
-                onChange={(e) => setZip(e.target.value.replace(/\D/g, ""))}
-                className="w-full rounded-lg bg-background border border-card-border px-4 py-3 text-lg font-mono tracking-widest placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-sky/50 focus:border-sky transition-colors"
+                placeholder="e.g. 32003, Jacksonville FL, Lake Okeechobee"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="w-full rounded-lg bg-background border border-card-border px-4 py-3 text-lg placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-sky/50 focus:border-sky transition-colors"
               />
             </div>
             <div className="flex gap-2 self-end">
               <button
                 type="submit"
-                disabled={loading || locating || zip.length !== 5}
+                disabled={loading || locating || query.trim().length === 0}
                 className="rounded-lg bg-sky px-6 py-3 text-base font-bold text-background hover:bg-sky/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
               >
                 {loading ? (

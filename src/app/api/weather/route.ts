@@ -76,8 +76,49 @@ async function getCoordinatesFromZip(
   return { lat: coords.y, lon: coords.x };
 }
 
+async function getCoordinatesFromQuery(
+  query: string
+): Promise<{ lat: number; lon: number }> {
+  // Use US Census Bureau geocoder for freeform address/place name search
+  const encoded = encodeURIComponent(query);
+  const res = await fetch(
+    `https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=${encoded}&benchmark=Public_AR_Current&format=json`,
+    { next: { revalidate: 86400 } }
+  );
+
+  if (res.ok) {
+    const data = await res.json();
+    const matches = data?.result?.addressMatches;
+    if (matches && matches.length > 0) {
+      const coords = matches[0].coordinates;
+      return { lat: coords.y, lon: coords.x };
+    }
+  }
+
+  // Fallback: try Nominatim (OpenStreetMap) geocoder - free, no key needed
+  const nomRes = await fetch(
+    `https://nominatim.openstreetmap.org/search?q=${encoded}&format=json&countrycodes=us&limit=1`,
+    { headers: { "User-Agent": "ParamotorPreflight/1.0" } }
+  );
+
+  if (!nomRes.ok) {
+    throw new Error("Could not find that location");
+  }
+
+  const nomData = await nomRes.json();
+  if (!nomData || nomData.length === 0) {
+    throw new Error("Could not find that location. Try a zip code or city, state format.");
+  }
+
+  return {
+    lat: parseFloat(nomData[0].lat),
+    lon: parseFloat(nomData[0].lon),
+  };
+}
+
 export async function GET(request: NextRequest) {
   const zip = request.nextUrl.searchParams.get("zip");
+  const query = request.nextUrl.searchParams.get("q");
   const latParam = request.nextUrl.searchParams.get("lat");
   const lonParam = request.nextUrl.searchParams.get("lon");
 
@@ -107,9 +148,21 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
+  } else if (query && query.trim().length > 0) {
+    // Place name / address search mode
+    try {
+      const coords = await getCoordinatesFromQuery(query.trim());
+      lat = coords.lat;
+      lon = coords.lon;
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : "Could not find that location" },
+        { status: 400 }
+      );
+    }
   } else {
     return NextResponse.json(
-      { error: "Please provide a zip code or allow location access" },
+      { error: "Please provide a location, zip code, or allow location access" },
       { status: 400 }
     );
   }
@@ -155,7 +208,7 @@ export async function GET(request: NextRequest) {
 
     // Extract current conditions from hourly (first period)
     const currentHourly = hourlyData.properties?.periods?.[0];
-    const upcomingHours = hourlyData.properties?.periods?.slice(0, 12) || [];
+    const upcomingHours = hourlyData.properties?.periods?.slice(0, 24) || [];
 
     // Extract wind gust from grid data
     const gustValues = gridData.properties?.windGust?.values;
