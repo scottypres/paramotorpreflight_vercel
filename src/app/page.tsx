@@ -56,6 +56,8 @@ function saveThresholds(t: Thresholds) {
 
 interface WeatherData {
   location: { city: string; state: string; lat: number; lon: number; zip: string };
+  sunrise: string;
+  sunset: string;
   current: {
     temperature: number;
     temperatureUnit: string;
@@ -921,35 +923,62 @@ export default function Home() {
 
             {/* Hourly Wind Forecast */}
             <SectionCard title="Hourly Wind Forecast" icon="📊" delay={300}>
-              <div className="overflow-x-auto -mx-2">
-                <div className="flex gap-2 px-2 pb-2 min-w-max">
-                  {weather.hourly.slice(0, 12).map((h, i) => (
-                    <div
-                      key={i}
-                      className="flex-shrink-0 w-20 rounded-xl bg-background border border-card-border p-3 text-center text-xs"
-                    >
-                      <p className="text-muted font-medium">{formatHour(h.time)}</p>
-                      <p className="text-lg my-1">
-                        {getWeatherIcon(h.shortForecast)}
-                      </p>
-                      <p
-                        className={`font-bold text-sm ${getWindColor(h.windSpeed)}`}
-                      >
-                        {h.windSpeed}
-                      </p>
-                      <p className="text-muted">
-                        {directionArrow(h.windDirection)} {h.windDirection}
-                      </p>
-                      <p className="font-semibold mt-1">
-                        {h.temperature}°{h.temperatureUnit}
-                      </p>
+              {(() => {
+                // Filter hours to 2h before sunrise through 2h after sunset
+                const TWO_HOURS = 2 * 60 * 60 * 1000;
+                const sunriseTime = new Date(weather.sunrise).getTime() - TWO_HOURS;
+                const sunsetTime = new Date(weather.sunset).getTime() + TWO_HOURS;
+
+                const filteredHours = weather.hourly.filter((h) => {
+                  const t = new Date(h.time).getTime();
+                  return t >= sunriseTime && t <= sunsetTime;
+                });
+
+                const displayHours = filteredHours.length > 0 ? filteredHours : weather.hourly.slice(0, 12);
+
+                const sunriseLocal = new Date(weather.sunrise).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+                const sunsetLocal = new Date(weather.sunset).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+
+                return (
+                  <>
+                    <div className="flex gap-4 mb-3 text-xs text-muted">
+                      <span>Sunrise: <span className="text-warn font-semibold">{sunriseLocal}</span></span>
+                      <span>Sunset: <span className="text-orange font-semibold">{sunsetLocal}</span></span>
                     </div>
-                  ))}
-                </div>
-              </div>
-              <p className="text-xs text-muted mt-2">
-                Scroll right to see more hours →
-              </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-card-border">
+                            <th className="text-left py-2 px-2 text-muted font-medium">Time</th>
+                            <th className="text-left py-2 px-2 text-muted font-medium">Wind</th>
+                            <th className="text-left py-2 px-2 text-muted font-medium">Dir</th>
+                            <th className="text-right py-2 px-2 text-muted font-medium">Temp</th>
+                            <th className="text-left py-2 px-2 text-muted font-medium">Forecast</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {displayHours.map((h, i) => (
+                            <tr key={i} className="border-b border-card-border last:border-0">
+                              <td className="py-2 px-2 font-medium whitespace-nowrap">{formatHour(h.time)}</td>
+                              <td className={`py-2 px-2 font-bold ${getWindColor(h.windSpeed)}`}>{h.windSpeed}</td>
+                              <td className="py-2 px-2 whitespace-nowrap">
+                                <span className="text-base">{directionArrow(h.windDirection)}</span> {h.windDirection}
+                              </td>
+                              <td className="py-2 px-2 text-right font-mono">{h.temperature}°{h.temperatureUnit}</td>
+                              <td className="py-2 px-2 text-muted whitespace-nowrap">
+                                {getWeatherIcon(h.shortForecast)} {h.shortForecast}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-xs text-muted mt-2">
+                      Showing flyable hours: 2h before sunrise through 2h after sunset
+                    </p>
+                  </>
+                );
+              })()}
             </SectionCard>
 
             {/* Winds Aloft */}

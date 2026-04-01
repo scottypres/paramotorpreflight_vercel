@@ -200,8 +200,13 @@ export async function GET(request: NextRequest) {
       ? (currentVisibility / 1609.34).toFixed(1)
       : null;
 
+    // Calculate sunrise/sunset
+    const sunTimes = calculateSunTimes(lat, lon);
+
     return NextResponse.json({
       location: { city, state, lat, lon, zip: locationZip },
+      sunrise: sunTimes.sunrise,
+      sunset: sunTimes.sunset,
       current: {
         temperature: currentHourly?.temperature,
         temperatureUnit: currentHourly?.temperatureUnit,
@@ -303,6 +308,48 @@ function parseWindsAloft(
       return { altitude: alt, wind: raw };
     })
     .filter(Boolean);
+}
+
+function calculateSunTimes(lat: number, lon: number): { sunrise: string; sunset: string } {
+  // Solar position calculation (simplified NOAA algorithm)
+  const now = new Date();
+  const start = new Date(now.getFullYear(), 0, 1);
+  const dayOfYear = Math.floor((now.getTime() - start.getTime()) / 86400000) + 1;
+
+  const latRad = (lat * Math.PI) / 180;
+
+  // Solar declination
+  const declination = 23.45 * Math.sin((2 * Math.PI * (284 + dayOfYear)) / 365);
+  const decRad = (declination * Math.PI) / 180;
+
+  // Hour angle for sunrise/sunset
+  const cosHA = -(Math.tan(latRad) * Math.tan(decRad));
+  // Clamp for polar regions
+  const clampedCosHA = Math.max(-1, Math.min(1, cosHA));
+  const haRad = Math.acos(clampedCosHA);
+  const haDeg = (haRad * 180) / Math.PI;
+
+  // Equation of time (minutes)
+  const B = ((360 / 365) * (dayOfYear - 81)) * (Math.PI / 180);
+  const eot = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
+
+  // Solar noon in minutes from midnight UTC
+  const solarNoonMin = 720 - 4 * lon - eot;
+
+  const sunriseMin = solarNoonMin - 4 * haDeg;
+  const sunsetMin = solarNoonMin + 4 * haDeg;
+
+  function minsToISO(mins: number): string {
+    const d = new Date(now);
+    d.setUTCHours(0, 0, 0, 0);
+    d.setUTCMinutes(Math.round(mins));
+    return d.toISOString();
+  }
+
+  return {
+    sunrise: minsToISO(sunriseMin),
+    sunset: minsToISO(sunsetMin),
+  };
 }
 
 function degreesToCardinal(deg: number): string {
