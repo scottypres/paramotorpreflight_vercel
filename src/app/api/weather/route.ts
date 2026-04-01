@@ -291,15 +291,27 @@ function parseWindsAloft(
       const raw = parts[i];
       if (!raw || raw === "9900") return { altitude: alt, wind: "Light & Variable" };
       if (raw.length >= 4) {
-        const dir = raw.substring(0, 2) + "0";
+        const dirDeg = parseInt(raw.substring(0, 2) + "0");
         const speedKts = parseInt(raw.substring(2, 4));
         const speedMph = Math.round(speedKts * 1.15078);
+        const cardinal = degreesToCardinal(dirDeg);
         return {
           altitude: alt,
-          wind: `${dir}° at ${speedMph} mph`,
+          wind: `${cardinal} at ${speedMph} mph`,
         };
       }
       return { altitude: alt, wind: raw };
     })
     .filter(Boolean);
+}
+
+function degreesToCardinal(deg: number): string {
+  const dirs = [
+    "N", "NNE", "NE", "ENE",
+    "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW",
+    "W", "WNW", "NW", "NNW",
+  ];
+  const idx = Math.round(deg / 22.5) % 16;
+  return dirs[idx];
 }

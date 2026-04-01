@@ -101,7 +101,19 @@ function buildPopupHTML(features: AirspaceFeatureProperties[]): string {
       const statusColor = restricted ? "#ef4444" : "#22c55e";
       const statusText = restricted ? "RESTRICTED" : "OK to fly";
       const label = p.touchesSurface ? "Surface" : "Shelf";
-      const identStr = p.ident ? `<strong>${p.ident}</strong> — ` : "";
+      // Build the identifier/name line
+      // If we have an ICAO code, show it prominently. Otherwise just show the name.
+      let nameLine = "";
+      if (p.ident && p.name && p.name !== p.ident) {
+        // Have both code and name: "KATL — Atlanta Class B"
+        nameLine = `<strong>${p.ident}</strong> &mdash; ${p.name}`;
+      } else if (p.ident) {
+        // Only code
+        nameLine = `<strong>${p.ident}</strong>`;
+      } else if (p.name) {
+        // Only name (common for Class E)
+        nameLine = p.name;
+      }
 
       return `
         <div style="padding:6px 0;${features.length > 1 ? "border-bottom:1px solid rgba(255,255,255,0.1);" : ""}">
@@ -113,9 +125,7 @@ function buildPopupHTML(features: AirspaceFeatureProperties[]): string {
             <strong style="font-size:15px;">Class ${p.airspaceClass}</strong>
             <span style="font-size:11px;opacity:0.5;">${label}</span>
           </div>
-          <div style="font-size:12px;opacity:0.85;margin-left:16px;">
-            ${identStr}${p.name || ""}
-          </div>
+          ${nameLine ? `<div style="font-size:12px;opacity:0.85;margin-left:16px;">${nameLine}</div>` : ""}
           <div style="font-size:12px;opacity:0.6;margin-left:16px;">
             ${p.floor} &mdash; ${p.ceiling}
           </div>

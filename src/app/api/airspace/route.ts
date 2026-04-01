@@ -6,6 +6,8 @@ interface ArcGISAttributes {
   NAME: string;
   IDENT: string;
   ICAO_ID: string;
+  SECTOR: string;
+  TYPE_CODE: string;
   UPPER_VAL: number;
   LOWER_VAL: number;
   UPPER_UOM: string;
@@ -62,11 +64,16 @@ function formatAltitude(ft: number, isSurface: boolean): string {
   return `${ft.toLocaleString()} ft`;
 }
 
-// Try to extract a 3-4 letter airport code from a name string like "ATLANTA CLASS B"
+// Try to extract a 4-letter ICAO airport code from a name string
+// Names look like "ATLANTA CLASS B", "JACKSONVILLE INTL", etc.
+// We want to avoid matching generic words like "CLASS", "INTL"
 function extractIdent(name: string): string {
-  // Sometimes the name itself IS the ident
-  const match = name.match(/\b([A-Z]{3,4})\b/);
-  return match ? match[1] : "";
+  if (!name) return "";
+  // If the name looks like it IS an ICAO code (starts with K + 3 letters)
+  const icaoMatch = name.match(/\b(K[A-Z]{3})\b/);
+  if (icaoMatch) return icaoMatch[1];
+  // Otherwise return empty — the name itself will be shown
+  return "";
 }
 
 // Convert ArcGIS rings to GeoJSON polygon coordinates
@@ -238,7 +245,7 @@ export async function GET(request: NextRequest) {
       geometry: envelope,
       geometryType: "esriGeometryEnvelope",
       spatialRel: "esriSpatialRelIntersects",
-      outFields: "CLASS,LOCAL_TYPE,NAME,IDENT,ICAO_ID,UPPER_VAL,LOWER_VAL,UPPER_UOM,LOWER_UOM",
+      outFields: "CLASS,LOCAL_TYPE,NAME,IDENT,ICAO_ID,SECTOR,TYPE_CODE,UPPER_VAL,LOWER_VAL,UPPER_UOM,LOWER_UOM",
       returnGeometry: "true",
       outSR: "4326",
       f: "json",
