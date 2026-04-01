@@ -78,17 +78,43 @@ async function getCoordinatesFromZip(
 
 export async function GET(request: NextRequest) {
   const zip = request.nextUrl.searchParams.get("zip");
+  const latParam = request.nextUrl.searchParams.get("lat");
+  const lonParam = request.nextUrl.searchParams.get("lon");
 
-  if (!zip || !/^\d{5}$/.test(zip)) {
+  let lat: number;
+  let lon: number;
+  let locationZip = zip || "";
+
+  if (latParam && lonParam) {
+    // Direct lat/lon mode (from geolocation)
+    lat = parseFloat(latParam);
+    lon = parseFloat(lonParam);
+    if (isNaN(lat) || isNaN(lon)) {
+      return NextResponse.json(
+        { error: "Invalid coordinates" },
+        { status: 400 }
+      );
+    }
+  } else if (zip && /^\d{5}$/.test(zip)) {
+    // Zip code mode
+    try {
+      const coords = await getCoordinatesFromZip(zip);
+      lat = coords.lat;
+      lon = coords.lon;
+    } catch {
+      return NextResponse.json(
+        { error: "Could not find that zip code" },
+        { status: 400 }
+      );
+    }
+  } else {
     return NextResponse.json(
-      { error: "Please enter a valid 5-digit US zip code" },
+      { error: "Please provide a zip code or allow location access" },
       { status: 400 }
     );
   }
 
   try {
-    // Step 1: Get coordinates from zip
-    const { lat, lon } = await getCoordinatesFromZip(zip);
 
     // Step 2: Get NWS point metadata
     const pointRes = await fetch(
@@ -168,7 +194,7 @@ export async function GET(request: NextRequest) {
       : null;
 
     return NextResponse.json({
-      location: { city, state, lat, lon, zip },
+      location: { city, state, lat, lon, zip: locationZip },
       current: {
         temperature: currentHourly?.temperature,
         temperatureUnit: currentHourly?.temperatureUnit,

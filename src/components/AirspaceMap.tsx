@@ -256,7 +256,6 @@ export default function AirspaceMap({ lat, lon, geoJSON }: AirspaceMapProps) {
       ],
       { padding: [10, 10] }
     );
-    }
 
     return () => {
       if (mapInstanceRef.current) {

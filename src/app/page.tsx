@@ -284,25 +284,19 @@ function FuelMixChart() {
 export default function Home() {
   const [zip, setZip] = useState("");
   const [loading, setLoading] = useState(false);
+  const [locating, setLocating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [airspace, setAirspace] = useState<AirspaceData | null>(null);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!/^\d{5}$/.test(zip)) {
-      setError("Please enter a valid 5-digit zip code");
-      return;
-    }
-
+  async function fetchData(weatherUrl: string) {
     setLoading(true);
     setError(null);
     setWeather(null);
     setAirspace(null);
 
     try {
-      // Fetch weather first (it gives us lat/lon)
-      const weatherRes = await fetch(`/api/weather?zip=${zip}`);
+      const weatherRes = await fetch(weatherUrl);
       const weatherData = await weatherRes.json();
 
       if (weatherData.error) {
@@ -311,7 +305,6 @@ export default function Home() {
 
       setWeather(weatherData);
 
-      // Now fetch airspace with the lat/lon
       const { lat, lon } = weatherData.location;
       const airspaceRes = await fetch(`/api/airspace?lat=${lat}&lon=${lon}`);
       const airspaceData = await airspaceRes.json();
@@ -328,6 +321,47 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!/^\d{5}$/.test(zip)) {
+      setError("Please enter a valid 5-digit zip code");
+      return;
+    }
+    fetchData(`/api/weather?zip=${zip}`);
+  }
+
+  function handleUseLocation() {
+    if (!navigator.geolocation) {
+      setError("Geolocation is not supported by your browser");
+      return;
+    }
+
+    setLocating(true);
+    setError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocating(false);
+        const { latitude, longitude } = position.coords;
+        fetchData(`/api/weather?lat=${latitude}&lon=${longitude}`);
+      },
+      (err) => {
+        setLocating(false);
+        switch (err.code) {
+          case err.PERMISSION_DENIED:
+            setError("Location access denied. Please enter a zip code instead.");
+            break;
+          case err.POSITION_UNAVAILABLE:
+            setError("Location unavailable. Please enter a zip code instead.");
+            break;
+          default:
+            setError("Could not get your location. Please enter a zip code instead.");
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
+    );
   }
 
   const canFlyWeather =
@@ -379,38 +413,78 @@ export default function Home() {
                 className="w-full rounded-lg bg-background border border-card-border px-4 py-3 text-lg font-mono tracking-widest placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-sky/50 focus:border-sky transition-colors"
               />
             </div>
-            <button
-              type="submit"
-              disabled={loading || zip.length !== 5}
-              className="self-end rounded-lg bg-sky px-8 py-3 text-base font-bold text-background hover:bg-sky/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-            >
-              {loading ? (
-                <span className="flex items-center gap-2">
-                  <svg
-                    className="animate-spin h-5 w-5"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </svg>
-                  Checking...
-                </span>
-              ) : (
-                "Check Conditions"
-              )}
-            </button>
+            <div className="flex gap-2 self-end">
+              <button
+                type="submit"
+                disabled={loading || locating || zip.length !== 5}
+                className="rounded-lg bg-sky px-6 py-3 text-base font-bold text-background hover:bg-sky/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                {loading ? (
+                  <span className="flex items-center gap-2">
+                    <svg
+                      className="animate-spin h-5 w-5"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                      />
+                    </svg>
+                    Checking...
+                  </span>
+                ) : (
+                  "Check"
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={handleUseLocation}
+                disabled={loading || locating}
+                className="rounded-lg border border-card-border bg-background px-4 py-3 text-sm font-medium text-muted hover:text-foreground hover:border-sky/50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                {locating ? (
+                  <span className="flex items-center gap-2">
+                    <svg
+                      className="animate-spin h-4 w-4"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                      />
+                    </svg>
+                    Locating...
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                      <path fillRule="evenodd" d="M9.69 18.933l.003.001C9.89 19.02 10 19 10 19s.11.02.308-.066l.002-.001.006-.003.018-.008a5.741 5.741 0 00.281-.14c.186-.096.446-.24.757-.433.62-.384 1.445-.966 2.274-1.765C15.302 14.988 17 12.493 17 9A7 7 0 103 9c0 3.492 1.698 5.988 3.355 7.584a13.731 13.731 0 002.273 1.765 11.842 11.842 0 00.976.544l.062.029.018.008.006.003zM10 11.25a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5z" clipRule="evenodd" />
+                    </svg>
+                    Use My Location
+                  </span>
+                )}
+              </button>
+            </div>
           </form>
 
           {error && (
@@ -448,7 +522,8 @@ export default function Home() {
                     </h2>
                   </div>
                   <p className="text-muted text-sm">
-                    {weather.location.city}, {weather.location.state} ({zip})
+                    {weather.location.city}, {weather.location.state}
+                    {weather.location.zip ? ` (${weather.location.zip})` : ""}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
