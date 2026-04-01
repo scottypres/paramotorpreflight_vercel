@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, FormEvent } from "react";
+import { useState, useEffect, useCallback, FormEvent } from "react";
 import dynamic from "next/dynamic";
 
 const AirspaceMap = dynamic(() => import("@/components/AirspaceMap"), {
@@ -11,6 +11,44 @@ const AirspaceMap = dynamic(() => import("@/components/AirspaceMap"), {
     </div>
   ),
 });
+
+/* ------------------------------------------------------------------ */
+/*  Cookie helpers & threshold defaults                                */
+/* ------------------------------------------------------------------ */
+
+const DEFAULT_THRESHOLDS = {
+  maxWind: 14,    // mph
+  maxGust: 20,    // mph
+  minVisibility: 3, // statute miles
+};
+
+type Thresholds = typeof DEFAULT_THRESHOLDS;
+
+function getCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function setCookie(name: string, value: string, days = 365) {
+  const expires = new Date(Date.now() + days * 864e5).toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires};path=/;SameSite=Lax`;
+}
+
+function loadThresholds(): Thresholds {
+  try {
+    const raw = getCookie("ppf_thresholds");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { ...DEFAULT_THRESHOLDS, ...parsed };
+    }
+  } catch { /* use defaults */ }
+  return { ...DEFAULT_THRESHOLDS };
+}
+
+function saveThresholds(t: Thresholds) {
+  setCookie("ppf_thresholds", JSON.stringify(t));
+}
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -288,6 +326,21 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [airspace, setAirspace] = useState<AirspaceData | null>(null);
+  const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Load thresholds from cookie on mount
+  useEffect(() => {
+    setThresholds(loadThresholds());
+  }, []);
+
+  const updateThreshold = useCallback((key: keyof Thresholds, value: number) => {
+    setThresholds((prev) => {
+      const next = { ...prev, [key]: value };
+      saveThresholds(next);
+      return next;
+    });
+  }, []);
 
   async function fetchData(weatherUrl: string) {
     setLoading(true);
@@ -366,8 +419,9 @@ export default function Home() {
 
   const canFlyWeather =
     weather &&
-    windSpeedNumber(weather.current.windSpeed) <= 14 &&
-    (!weather.current.windGust || windSpeedNumber(weather.current.windGust) <= 20);
+    windSpeedNumber(weather.current.windSpeed) <= thresholds.maxWind &&
+    (!weather.current.windGust || windSpeedNumber(weather.current.windGust) <= thresholds.maxGust) &&
+    (!weather.current.visibility || parseFloat(weather.current.visibility) >= thresholds.minVisibility);
 
   const overallGoodToFly =
     canFlyWeather && airspace?.canFly;
@@ -490,6 +544,108 @@ export default function Home() {
           {error && (
             <div className="mt-4 rounded-lg bg-danger/10 border border-danger/30 px-4 py-3 text-danger text-sm">
               {error}
+            </div>
+          )}
+        </div>
+
+        {/* Flyable Conditions Settings */}
+        <div className="card mb-6">
+          <button
+            type="button"
+            onClick={() => setShowSettings(!showSettings)}
+            className="w-full flex items-center justify-between text-sm font-medium text-muted hover:text-foreground transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                <path fillRule="evenodd" d="M7.84 1.804A1 1 0 018.82 1h2.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l1.18 2.044a1 1 0 01-.205 1.251l-1.267 1.113a7.047 7.047 0 010 2.228l1.267 1.113a1 1 0 01.206 1.25l-1.18 2.045a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H8.82a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-1.18-2.044a1 1 0 01.205-1.251l1.267-1.114a7.05 7.05 0 010-2.227L1.821 7.773a1 1 0 01-.206-1.25l1.18-2.045a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 017.51 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+              </svg>
+              Flyable Conditions Settings
+            </span>
+            <span className="text-xs">{showSettings ? "▲" : "▼"}</span>
+          </button>
+
+          {showSettings && (
+            <div className="mt-4 space-y-4 pt-4 border-t border-card-border">
+              <p className="text-xs text-muted">
+                Adjust thresholds for the go/no-go assessment. These are saved to your browser.
+              </p>
+
+              {/* Max Wind Speed */}
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <label htmlFor="maxWind">Max Wind Speed</label>
+                  <span className="font-mono font-bold text-sky">{thresholds.maxWind} mph</span>
+                </div>
+                <input
+                  id="maxWind"
+                  type="range"
+                  min={5}
+                  max={30}
+                  step={1}
+                  value={thresholds.maxWind}
+                  onChange={(e) => updateThreshold("maxWind", parseInt(e.target.value))}
+                  className="w-full accent-sky"
+                />
+                <div className="flex justify-between text-xs text-muted">
+                  <span>5 mph</span>
+                  <span>30 mph</span>
+                </div>
+              </div>
+
+              {/* Max Gust */}
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <label htmlFor="maxGust">Max Wind Gust</label>
+                  <span className="font-mono font-bold text-sky">{thresholds.maxGust} mph</span>
+                </div>
+                <input
+                  id="maxGust"
+                  type="range"
+                  min={10}
+                  max={40}
+                  step={1}
+                  value={thresholds.maxGust}
+                  onChange={(e) => updateThreshold("maxGust", parseInt(e.target.value))}
+                  className="w-full accent-sky"
+                />
+                <div className="flex justify-between text-xs text-muted">
+                  <span>10 mph</span>
+                  <span>40 mph</span>
+                </div>
+              </div>
+
+              {/* Min Visibility */}
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <label htmlFor="minVis">Min Visibility</label>
+                  <span className="font-mono font-bold text-sky">{thresholds.minVisibility} mi</span>
+                </div>
+                <input
+                  id="minVis"
+                  type="range"
+                  min={1}
+                  max={10}
+                  step={0.5}
+                  value={thresholds.minVisibility}
+                  onChange={(e) => updateThreshold("minVisibility", parseFloat(e.target.value))}
+                  className="w-full accent-sky"
+                />
+                <div className="flex justify-between text-xs text-muted">
+                  <span>1 mi</span>
+                  <span>10 mi</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setThresholds({ ...DEFAULT_THRESHOLDS });
+                  saveThresholds(DEFAULT_THRESHOLDS);
+                }}
+                className="text-xs text-muted hover:text-foreground transition-colors underline"
+              >
+                Reset to defaults (Wind: 14 mph, Gust: 20 mph, Visibility: 3 mi)
+              </button>
             </div>
           )}
         </div>
