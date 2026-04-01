@@ -84,7 +84,7 @@ interface WeatherData {
     shortForecast: string;
     isDaytime: boolean;
   }[];
-  windsAloft: { altitude: string; wind: string }[] | null;
+  windsAloft: { altitude: string; wind: string; temp: string | null }[] | null;
 }
 
 interface AirspaceLayer {
@@ -998,6 +998,7 @@ export default function Home() {
                         <th className="text-left py-2 px-2 text-muted font-medium">Altitude</th>
                         <th className="text-left py-2 px-2 text-muted font-medium">Speed</th>
                         <th className="text-left py-2 px-2 text-muted font-medium">Direction</th>
+                        <th className="text-right py-2 px-2 text-muted font-medium">Temp</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1026,6 +1027,9 @@ export default function Home() {
                               ) : (
                                 <span className="text-muted">—</span>
                               )}
+                            </td>
+                            <td className="py-2.5 px-2 text-right font-mono">
+                              {w.temp || <span className="text-muted">—</span>}
                             </td>
                           </tr>
                         );

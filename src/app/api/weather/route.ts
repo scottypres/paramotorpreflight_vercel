@@ -242,9 +242,13 @@ export async function GET(request: NextRequest) {
     const windDirection = currentHourly?.windDirection || "Unknown";
 
     // Build ground-level entry and prepend to winds aloft
+    const surfaceTemp = currentHourly?.temperature
+      ? `${currentHourly.temperature}°${currentHourly.temperatureUnit}`
+      : null;
     const groundWind = {
       altitude: "Surface",
       wind: `${windDirection} at ${windSpeed}`,
+      temp: surfaceTemp,
     };
     const windsAloftWithGround = [groundWind, ...(windsAloft || [])];
 
@@ -310,12 +314,9 @@ function parseWindsAloft(
   rawText: string,
   lat: number,
   lon: number
-): { altitude: string; wind: string }[] | null {
-  // Winds aloft data is station-based. Find nearest station.
-  // The format is complex, so we'll do a simplified parse.
+): { altitude: string; wind: string; temp: string | null }[] | null {
   const lines = rawText.split("\n").filter((l) => l.trim());
 
-  // Find the data section (after the header lines)
   let dataStarted = false;
   const stations: {
     id: string;
@@ -337,28 +338,40 @@ function parseWindsAloft(
 
   if (stations.length === 0) return null;
 
-  // For simplicity, return a generic winds aloft summary
-  // In production, you'd match the nearest station by lat/lon
   const altitudes = ["3,000 ft", "6,000 ft", "9,000 ft", "12,000 ft"];
-  const nearest = stations[0]; // Simplified - would need station lat/lon database
+  const nearest = stations[0];
   if (!nearest) return null;
 
   const parts = nearest.data.split(/\s+/).slice(1); // skip station ID
   return altitudes
     .map((alt, i) => {
       const raw = parts[i];
-      if (!raw || raw === "9900") return { altitude: alt, wind: "Light & Variable" };
+      if (!raw || raw === "9900") return { altitude: alt, wind: "Light & Variable", temp: null };
       if (raw.length >= 4) {
         const dirDeg = parseInt(raw.substring(0, 2) + "0");
         const speedKts = parseInt(raw.substring(2, 4));
         const speedMph = Math.round(speedKts * 1.15078);
         const cardinal = degreesToCardinal(dirDeg);
+
+        // FB format: 4 chars = DDSS (no temp at 3k), 6+ chars = DDSSTt (temp in °C)
+        let temp: string | null = null;
+        if (raw.length >= 6) {
+          let tempC = parseInt(raw.substring(4, 6));
+          // Negative temps indicated by direction >= 51 (add 100 to speed, negate temp)
+          if (dirDeg >= 510) {
+            tempC = -tempC;
+          }
+          const tempF = Math.round(tempC * 9 / 5 + 32);
+          temp = `${tempF}°F`;
+        }
+
         return {
           altitude: alt,
           wind: `${cardinal} at ${speedMph} mph`,
+          temp,
         };
       }
-      return { altitude: alt, wind: raw };
+      return { altitude: alt, wind: raw, temp: null };
     })
     .filter(Boolean);
 }
