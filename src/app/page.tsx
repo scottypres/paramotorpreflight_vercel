@@ -991,9 +991,51 @@ export default function Home() {
                   Wind speed and direction at different altitudes. Important for
                   understanding turbulence and wind shear.
                 </p>
-                {weather.windsAloft.map((w, i) => (
-                  <DataRow key={i} label={w.altitude} value={w.wind} />
-                ))}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-card-border">
+                        <th className="text-left py-2 px-2 text-muted font-medium">Altitude</th>
+                        <th className="text-left py-2 px-2 text-muted font-medium">Speed</th>
+                        <th className="text-left py-2 px-2 text-muted font-medium">Direction</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {weather.windsAloft.map((w, i) => {
+                        // Parse "NW at 12 mph" or "Light & Variable"
+                        const match = w.wind.match(/^(\S+)\s+at\s+(\d+\s*mph)$/);
+                        const dir = match ? match[1] : "";
+                        const speed = match ? match[2] : w.wind;
+                        const speedNum = speed.match(/(\d+)/);
+                        const colorClass = speedNum ? getWindColor(speed) : "text-muted";
+                        const isSurface = w.altitude === "Surface";
+
+                        return (
+                          <tr key={i} className={`border-b border-card-border last:border-0 ${isSurface ? "bg-sky/5" : ""}`}>
+                            <td className={`py-2.5 px-2 font-medium ${isSurface ? "text-sky" : ""}`}>
+                              {w.altitude}
+                            </td>
+                            <td className={`py-2.5 px-2 font-bold ${colorClass}`}>
+                              {speed}
+                            </td>
+                            <td className="py-2.5 px-2">
+                              {dir ? (
+                                <span>
+                                  <span className="text-base">{directionArrow(dir)}</span> {dir}
+                                </span>
+                              ) : (
+                                <span className="text-muted">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-muted mt-2">
+                  All speeds in mph. Surface wind from current NWS observation.
+                </p>
               </SectionCard>
             )}
 
