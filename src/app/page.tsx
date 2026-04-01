@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, FormEvent } from "react";
+import { useState, useEffect, useCallback, useRef, FormEvent } from "react";
 import dynamic from "next/dynamic";
 
 const AirspaceMap = dynamic(() => import("@/components/AirspaceMap"), {
@@ -331,10 +331,82 @@ export default function Home() {
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [showSettings, setShowSettings] = useState(false);
 
+  // Autocomplete state
+  const [suggestions, setSuggestions] = useState<{ label: string; full: string; lat: number; lon: number }[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [activeSuggestion, setActiveSuggestion] = useState(-1);
+  const autocompleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputWrapperRef = useRef<HTMLDivElement>(null);
+
   // Load thresholds from cookie on mount
   useEffect(() => {
     setThresholds(loadThresholds());
   }, []);
+
+  // Close suggestions when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (inputWrapperRef.current && !inputWrapperRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Debounced autocomplete fetch
+  const fetchSuggestions = useCallback((value: string) => {
+    if (autocompleteTimer.current) clearTimeout(autocompleteTimer.current);
+
+    // Don't autocomplete zip codes or very short queries
+    if (value.trim().length < 3 || /^\d+$/.test(value.trim())) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    autocompleteTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/autocomplete?q=${encodeURIComponent(value.trim())}`);
+        const data = await res.json();
+        setSuggestions(data);
+        setShowSuggestions(data.length > 0);
+        setActiveSuggestion(-1);
+      } catch {
+        setSuggestions([]);
+        setShowSuggestions(false);
+      }
+    }, 300);
+  }, []);
+
+  function handleQueryChange(value: string) {
+    setQuery(value);
+    fetchSuggestions(value);
+  }
+
+  function selectSuggestion(suggestion: { label: string; lat: number; lon: number }) {
+    setQuery(suggestion.label);
+    setSuggestions([]);
+    setShowSuggestions(false);
+    fetchData(`/api/weather?lat=${suggestion.lat}&lon=${suggestion.lon}`);
+  }
+
+  function handleKeyDownSuggestions(e: React.KeyboardEvent) {
+    if (!showSuggestions || suggestions.length === 0) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveSuggestion((prev) => (prev < suggestions.length - 1 ? prev + 1 : 0));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveSuggestion((prev) => (prev > 0 ? prev - 1 : suggestions.length - 1));
+    } else if (e.key === "Enter" && activeSuggestion >= 0) {
+      e.preventDefault();
+      selectSuggestion(suggestions[activeSuggestion]);
+    } else if (e.key === "Escape") {
+      setShowSuggestions(false);
+    }
+  }
 
   const updateThreshold = useCallback((key: keyof Thresholds, value: number) => {
     setThresholds((prev) => {
@@ -456,7 +528,7 @@ export default function Home() {
         {/* Zip Code Input */}
         <div className="card mb-8">
           <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1">
+            <div className="flex-1 relative" ref={inputWrapperRef}>
               <label
                 htmlFor="location"
                 className="block text-sm font-medium text-muted mb-1"
@@ -466,11 +538,37 @@ export default function Home() {
               <input
                 id="location"
                 type="text"
+                autoComplete="off"
                 placeholder="e.g. 32003, Jacksonville FL, Lake Okeechobee"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => handleQueryChange(e.target.value)}
+                onKeyDown={handleKeyDownSuggestions}
+                onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
                 className="w-full rounded-lg bg-background border border-card-border px-4 py-3 text-lg placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-sky/50 focus:border-sky transition-colors"
               />
+              {showSuggestions && suggestions.length > 0 && (
+                <ul className="absolute z-50 left-0 right-0 mt-1 rounded-lg bg-card border border-card-border shadow-lg overflow-hidden">
+                  {suggestions.map((s, i) => (
+                    <li
+                      key={i}
+                      className={`px-4 py-3 text-sm cursor-pointer transition-colors ${
+                        i === activeSuggestion
+                          ? "bg-sky/15 text-sky"
+                          : "hover:bg-sky/10 text-foreground"
+                      }`}
+                      onMouseDown={() => selectSuggestion(s)}
+                      onMouseEnter={() => setActiveSuggestion(i)}
+                    >
+                      <span className="font-medium">{s.label}</span>
+                      {s.full !== s.label && (
+                        <span className="text-muted text-xs ml-2 truncate">
+                          {s.full.length > 60 ? s.full.substring(0, 60) + "..." : s.full}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
             <div className="flex gap-2 self-end">
               <button
