@@ -65,6 +65,7 @@ interface AirspaceGeoJSON {
     properties: {
       airspaceClass: string;
       name: string;
+      ident: string;
       floor: string;
       ceiling: string;
       lowerFt: number;

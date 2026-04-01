@@ -4,6 +4,8 @@ interface ArcGISAttributes {
   CLASS: string;
   LOCAL_TYPE: string;
   NAME: string;
+  IDENT: string;
+  ICAO_ID: string;
   UPPER_VAL: number;
   LOWER_VAL: number;
   UPPER_UOM: string;
@@ -58,6 +60,13 @@ function formatAltitude(ft: number, isSurface: boolean): string {
   if (isSurface || ft === 0) return "Surface";
   if (ft >= 18000) return `FL${ft / 100}`;
   return `${ft.toLocaleString()} ft`;
+}
+
+// Try to extract a 3-4 letter airport code from a name string like "ATLANTA CLASS B"
+function extractIdent(name: string): string {
+  // Sometimes the name itself IS the ident
+  const match = name.match(/\b([A-Z]{3,4})\b/);
+  return match ? match[1] : "";
 }
 
 // Convert ArcGIS rings to GeoJSON polygon coordinates
@@ -229,7 +238,7 @@ export async function GET(request: NextRequest) {
       geometry: envelope,
       geometryType: "esriGeometryEnvelope",
       spatialRel: "esriSpatialRelIntersects",
-      outFields: "CLASS,LOCAL_TYPE,NAME,UPPER_VAL,LOWER_VAL,UPPER_UOM,LOWER_UOM",
+      outFields: "CLASS,LOCAL_TYPE,NAME,IDENT,ICAO_ID,UPPER_VAL,LOWER_VAL,UPPER_UOM,LOWER_UOM",
       returnGeometry: "true",
       outSR: "4326",
       f: "json",
@@ -253,6 +262,7 @@ export async function GET(request: NextRequest) {
       properties: {
         airspaceClass: string;
         name: string;
+        ident: string;
         floor: string;
         ceiling: string;
         lowerFt: number;
@@ -284,11 +294,18 @@ export async function GET(request: NextRequest) {
             // Skip Class A (FL180+) — not useful on the map for paramotors
             if (feat.attributes.CLASS === "A") continue;
 
+            // Extract airport identifier (try ICAO_ID first, then IDENT, then parse from NAME)
+            const ident =
+              feat.attributes.ICAO_ID ||
+              feat.attributes.IDENT ||
+              extractIdent(feat.attributes.NAME || "");
+
             mapFeatures.push({
               type: "Feature",
               properties: {
                 airspaceClass: feat.attributes.CLASS || "E",
                 name: feat.attributes.NAME || "",
+                ident,
                 floor: formatAltitude(lower, touchesSurface),
                 ceiling: formatAltitude(upper, false),
                 lowerFt: lower,

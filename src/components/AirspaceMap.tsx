@@ -7,6 +7,7 @@ import "leaflet/dist/leaflet.css";
 interface AirspaceFeatureProperties {
   airspaceClass: string;
   name: string;
+  ident: string;
   floor: string;
   ceiling: string;
   lowerFt: number;
@@ -14,19 +15,31 @@ interface AirspaceFeatureProperties {
   touchesSurface: boolean;
 }
 
-interface AirspaceGeoJSON {
-  type: "FeatureCollection";
-  features: {
-    type: "Feature";
-    properties: AirspaceFeatureProperties;
-    geometry: {
-      type: "Polygon";
-      coordinates: number[][][];
-    };
-  }[];
+interface AirspaceFeature {
+  type: "Feature";
+  properties: AirspaceFeatureProperties;
+  geometry: {
+    type: "Polygon";
+    coordinates: number[][][];
+  };
 }
 
-// Color scheme for airspace layers based on altitude
+interface AirspaceGeoJSON {
+  type: "FeatureCollection";
+  features: AirspaceFeature[];
+}
+
+// Part 103 ultralight rules:
+// Class G: Fly freely — uncontrolled airspace, no authorization needed
+// Class E: Fly freely — but must meet VFR weather minimums (3mi vis, cloud clearance)
+// Class D: RESTRICTED — need two-way radio communication with tower
+// Class C: RESTRICTED — need two-way radio communication with approach
+// Class B: RESTRICTED — prohibited for Part 103 ultralights
+// Class A: 18,000ft+ — irrelevant for paramotors
+function isRestricted(airspaceClass: string): boolean {
+  return ["B", "C", "D"].includes(airspaceClass);
+}
+
 function getLayerStyle(props: AirspaceFeatureProperties): {
   color: string;
   fillColor: string;
@@ -34,93 +47,93 @@ function getLayerStyle(props: AirspaceFeatureProperties): {
   weight: number;
   dashArray?: string;
 } {
-  const cls = props.airspaceClass;
+  const restricted = isRestricted(props.airspaceClass);
 
-  // Surface-level airspace: solid, more opaque
   if (props.touchesSurface) {
-    switch (cls) {
-      case "B":
-        return {
-          color: "#3b82f6",
-          fillColor: "#3b82f6",
-          fillOpacity: 0.25,
-          weight: 2,
-        };
-      case "C":
-        return {
-          color: "#a855f7",
-          fillColor: "#a855f7",
-          fillOpacity: 0.25,
-          weight: 2,
-        };
-      case "D":
-        return {
-          color: "#3b82f6",
-          fillColor: "#3b82f6",
-          fillOpacity: 0.2,
-          weight: 2,
-          dashArray: "5,5",
-        };
-      case "E":
-        return {
-          color: "#f43f5e",
-          fillColor: "#f43f5e",
-          fillOpacity: 0.1,
-          weight: 1,
-        };
-      default:
-        return {
-          color: "#94a3b8",
-          fillColor: "#94a3b8",
-          fillOpacity: 0.05,
-          weight: 1,
-        };
-    }
+    // Surface-level: solid borders, higher opacity
+    return {
+      color: restricted ? "#ef4444" : "#22c55e",
+      fillColor: restricted ? "#ef4444" : "#22c55e",
+      fillOpacity: restricted ? 0.22 : 0.15,
+      weight: 2,
+    };
   }
 
-  // Shelves / upper layers: dashed, lower opacity
-  switch (cls) {
-    case "B":
-      return {
-        color: "#60a5fa",
-        fillColor: "#60a5fa",
-        fillOpacity: 0.12,
-        weight: 1.5,
-        dashArray: "8,4",
-      };
-    case "C":
-      return {
-        color: "#c084fc",
-        fillColor: "#c084fc",
-        fillOpacity: 0.12,
-        weight: 1.5,
-        dashArray: "8,4",
-      };
-    case "D":
-      return {
-        color: "#60a5fa",
-        fillColor: "#60a5fa",
-        fillOpacity: 0.08,
-        weight: 1,
-        dashArray: "4,4",
-      };
-    case "E":
-      return {
-        color: "#f87171",
-        fillColor: "#f87171",
-        fillOpacity: 0.06,
-        weight: 1,
-        dashArray: "4,8",
-      };
-    default:
-      return {
-        color: "#94a3b8",
-        fillColor: "#94a3b8",
-        fillOpacity: 0.03,
-        weight: 1,
-        dashArray: "2,6",
-      };
+  // Shelves / upper layers: dashed borders, lower opacity
+  return {
+    color: restricted ? "#f87171" : "#4ade80",
+    fillColor: restricted ? "#f87171" : "#4ade80",
+    fillOpacity: restricted ? 0.10 : 0.07,
+    weight: 1.5,
+    dashArray: "8,4",
+  };
+}
+
+// Ray-casting point-in-polygon (for finding overlapping airspace on click)
+function isPointInRing(lat: number, lon: number, ring: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0]; // lon
+    const yi = ring[i][1]; // lat
+    const xj = ring[j][0];
+    const yj = ring[j][1];
+    const intersect =
+      yi > lat !== yj > lat &&
+      lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
   }
+  return inside;
+}
+
+function isPointInFeature(lat: number, lon: number, feature: AirspaceFeature): boolean {
+  const coords = feature.geometry.coordinates;
+  if (!coords || coords.length === 0) return false;
+  // Check outer ring
+  return isPointInRing(lat, lon, coords[0]);
+}
+
+function buildPopupHTML(features: AirspaceFeatureProperties[]): string {
+  if (features.length === 0) return "";
+
+  const rows = features
+    .map((p) => {
+      const restricted = isRestricted(p.airspaceClass);
+      const statusColor = restricted ? "#ef4444" : "#22c55e";
+      const statusText = restricted ? "RESTRICTED" : "OK to fly";
+      const label = p.touchesSurface ? "Surface" : "Shelf";
+      const identStr = p.ident ? `<strong>${p.ident}</strong> — ` : "";
+
+      return `
+        <div style="padding:6px 0;${features.length > 1 ? "border-bottom:1px solid rgba(255,255,255,0.1);" : ""}">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+            <span style="
+              display:inline-block;width:10px;height:10px;border-radius:2px;
+              background:${statusColor};
+            "></span>
+            <strong style="font-size:15px;">Class ${p.airspaceClass}</strong>
+            <span style="font-size:11px;opacity:0.5;">${label}</span>
+          </div>
+          <div style="font-size:12px;opacity:0.85;margin-left:16px;">
+            ${identStr}${p.name || ""}
+          </div>
+          <div style="font-size:12px;opacity:0.6;margin-left:16px;">
+            ${p.floor} &mdash; ${p.ceiling}
+          </div>
+          <div style="font-size:11px;margin-left:16px;margin-top:2px;color:${statusColor};font-weight:600;">
+            ${statusText}
+          </div>
+        </div>`;
+    })
+    .join("");
+
+  const header =
+    features.length > 1
+      ? `<div style="font-size:11px;opacity:0.5;margin-bottom:4px;font-weight:600;">
+           ${features.length} OVERLAPPING AIRSPACE LAYERS
+         </div>`
+      : "";
+
+  return `<div style="font-family:system-ui;line-height:1.4;max-height:300px;overflow-y:auto;">${header}${rows}</div>`;
 }
 
 interface AirspaceMapProps {
@@ -136,7 +149,6 @@ export default function AirspaceMap({ lat, lon, geoJSON }: AirspaceMapProps) {
   useEffect(() => {
     if (!mapRef.current) return;
 
-    // Clean up previous map
     if (mapInstanceRef.current) {
       mapInstanceRef.current.remove();
       mapInstanceRef.current = null;
@@ -161,24 +173,20 @@ export default function AirspaceMap({ lat, lon, geoJSON }: AirspaceMapProps) {
       }
     ).addTo(map);
 
-    // Sort features: draw larger/upper layers first, surface layers on top
+    // Sort: draw upper/shelf layers first, surface layers on top
     const sortedFeatures = [...geoJSON.features].sort((a, b) => {
-      // Surface layers should render on top (drawn last)
       if (a.properties.touchesSurface !== b.properties.touchesSurface) {
         return a.properties.touchesSurface ? 1 : -1;
       }
-      // Among same type, draw larger (higher ceiling) first
       return b.properties.upperFt - a.properties.upperFt;
     });
 
-    // Add airspace polygons
+    // Add airspace polygons — but handle clicks ourselves for overlap support
+    const allGeoLayers: L.Layer[] = [];
+
     for (const feature of sortedFeatures) {
       const style = getLayerStyle(feature.properties);
-      const { airspaceClass, name, floor, ceiling, touchesSurface } =
-        feature.properties;
 
-      // Leaflet GeoJSON expects [lat, lng] but GeoJSON/ArcGIS uses [lng, lat]
-      // L.geoJSON handles this automatically
       const geoJsonLayer = L.geoJSON(
         {
           type: "Feature",
@@ -187,26 +195,40 @@ export default function AirspaceMap({ lat, lon, geoJSON }: AirspaceMapProps) {
         } as GeoJSON.Feature,
         {
           style: () => style,
-          onEachFeature: (_feat, layer) => {
-            const label = touchesSurface ? "Surface" : "Shelf/Upper";
-            layer.bindPopup(
-              `<div style="font-family:system-ui;font-size:13px;line-height:1.4">
-                <strong style="font-size:15px">Class ${airspaceClass}</strong>
-                <span style="opacity:0.6;margin-left:4px">${label}</span>
-                <br/>
-                ${name ? `<span style="opacity:0.8">${name}</span><br/>` : ""}
-                <span style="opacity:0.7">${floor} &mdash; ${ceiling}</span>
-              </div>`,
-              { className: "airspace-popup" }
-            );
-          },
+          interactive: false, // we handle clicks on the map level
         }
       );
 
       geoJsonLayer.addTo(map);
+      allGeoLayers.push(geoJsonLayer);
     }
 
-    // Add user location marker
+    // Handle map clicks: find ALL overlapping airspace at click point
+    map.on("click", (e: L.LeafletMouseEvent) => {
+      const clickLat = e.latlng.lat;
+      const clickLon = e.latlng.lng;
+
+      // Find all features containing this point
+      const hitFeatures = geoJSON.features.filter((f) =>
+        isPointInFeature(clickLat, clickLon, f)
+      );
+
+      if (hitFeatures.length > 0) {
+        // Sort: most restrictive first
+        const sorted = [...hitFeatures].sort((a, b) => {
+          const pri: Record<string, number> = { B: 5, C: 4, D: 3, E: 2, A: 1 };
+          return (pri[b.properties.airspaceClass] || 0) - (pri[a.properties.airspaceClass] || 0);
+        });
+
+        const html = buildPopupHTML(sorted.map((f) => f.properties));
+        L.popup({ maxWidth: 320, className: "airspace-popup" })
+          .setLatLng(e.latlng)
+          .setContent(html)
+          .openOn(map);
+      }
+    });
+
+    // User location marker
     const userIcon = L.divIcon({
       html: `<div style="
         width:16px;height:16px;
@@ -222,10 +244,9 @@ export default function AirspaceMap({ lat, lon, geoJSON }: AirspaceMapProps) {
 
     L.marker([lat, lon], { icon: userIcon })
       .addTo(map)
-      .bindPopup("Your Location")
-      .openPopup();
+      .bindPopup("Your Location");
 
-    // Fit bounds to show all airspace, or at least center on user
+    // Fit bounds
     if (geoJSON.features.length > 0) {
       try {
         const allLayers = L.geoJSON({
@@ -234,7 +255,6 @@ export default function AirspaceMap({ lat, lon, geoJSON }: AirspaceMapProps) {
         } as GeoJSON.FeatureCollection);
         const bounds = allLayers.getBounds();
         if (bounds.isValid()) {
-          // Extend bounds to include user location
           bounds.extend([lat, lon]);
           map.fitBounds(bounds, { padding: [30, 30], maxZoom: 11 });
         }
@@ -256,69 +276,49 @@ export default function AirspaceMap({ lat, lon, geoJSON }: AirspaceMapProps) {
       <div
         ref={mapRef}
         className="w-full rounded-xl overflow-hidden border border-card-border"
-        style={{ height: "380px" }}
+        style={{ height: "400px" }}
       />
       {/* Legend */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-muted">
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-3 text-xs text-muted">
         <span className="flex items-center gap-1.5">
           <span
-            className="inline-block w-3 h-3 rounded-sm border"
+            className="inline-block w-3 h-3 rounded-sm border-2"
             style={{
-              backgroundColor: "rgba(59,130,246,0.25)",
-              borderColor: "#3b82f6",
+              backgroundColor: "rgba(239,68,68,0.22)",
+              borderColor: "#ef4444",
             }}
           />
-          Class B (surface)
+          Restricted (B/C/D) — surface
         </span>
         <span className="flex items-center gap-1.5">
           <span
             className="inline-block w-3 h-3 rounded-sm border border-dashed"
             style={{
-              backgroundColor: "rgba(96,165,250,0.12)",
-              borderColor: "#60a5fa",
+              backgroundColor: "rgba(248,113,113,0.10)",
+              borderColor: "#f87171",
             }}
           />
-          Class B (shelf)
+          Restricted — shelf/upper
         </span>
         <span className="flex items-center gap-1.5">
           <span
-            className="inline-block w-3 h-3 rounded-sm border"
+            className="inline-block w-3 h-3 rounded-sm border-2"
             style={{
-              backgroundColor: "rgba(168,85,247,0.25)",
-              borderColor: "#a855f7",
+              backgroundColor: "rgba(34,197,94,0.15)",
+              borderColor: "#22c55e",
             }}
           />
-          Class C (surface)
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span
-            className="inline-block w-3 h-3 rounded-sm border border-dashed"
-            style={{
-              backgroundColor: "rgba(192,132,252,0.12)",
-              borderColor: "#c084fc",
-            }}
-          />
-          Class C (shelf)
+          Flyable (E/G) — surface
         </span>
         <span className="flex items-center gap-1.5">
           <span
             className="inline-block w-3 h-3 rounded-sm border border-dashed"
             style={{
-              backgroundColor: "rgba(59,130,246,0.2)",
-              borderColor: "#3b82f6",
+              backgroundColor: "rgba(74,222,128,0.07)",
+              borderColor: "#4ade80",
             }}
           />
-          Class D
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span
-            className="inline-block w-3 h-3 rounded-sm border"
-            style={{
-              backgroundColor: "rgba(244,63,94,0.1)",
-              borderColor: "#f43f5e",
-            }}
-          />
-          Class E
+          Flyable — shelf/upper
         </span>
         <span className="flex items-center gap-1.5">
           <span
