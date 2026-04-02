@@ -29,8 +29,9 @@ interface NWSForecastPeriod {
 
 interface NWSGridData {
   properties: {
-    visibility?: { values: { value: number }[] };
-    windGust?: { values: { value: number }[] };
+    visibility?: { values: { validTime: string; value: number }[] };
+    windGust?: { values: { validTime: string; value: number }[] };
+    windSpeed?: { values: { validTime: string; value: number }[] };
     weather?: { values: { value: { coverage: string; weather: string }[] }[] };
   };
 }
@@ -210,9 +211,25 @@ export async function GET(request: NextRequest) {
     const currentHourly = hourlyData.properties?.periods?.[0];
     const upcomingHours = hourlyData.properties?.periods?.slice(0, 24) || [];
 
-    // Extract wind gust from grid data
-    const gustValues = gridData.properties?.windGust?.values;
-    const currentGust = gustValues?.[0]?.value;
+    // Build a lookup of gust values by hour from grid data
+    // Grid data uses ISO 8601 duration format: "2024-01-01T06:00:00+00:00/PT1H"
+    const gustByHour: Record<string, number> = {};
+    const gustValues = gridData.properties?.windGust?.values || [];
+    for (const gv of gustValues) {
+      if (!gv.validTime || gv.value == null) continue;
+      const [startStr, durStr] = gv.validTime.split("/");
+      const start = new Date(startStr).getTime();
+      // Parse duration like PT1H, PT2H, PT3H
+      const durMatch = durStr?.match(/PT(\d+)H/);
+      const hours = durMatch ? parseInt(durMatch[1]) : 1;
+      for (let h = 0; h < hours; h++) {
+        const hourKey = new Date(start + h * 3600000).toISOString().substring(0, 13);
+        gustByHour[hourKey] = gv.value;
+      }
+    }
+
+    // Extract current gust
+    const currentGust = gustValues[0]?.value;
 
     // Extract visibility from grid data
     const visValues = gridData.properties?.visibility?.values;
@@ -283,14 +300,20 @@ export async function GET(request: NextRequest) {
           windSpeed: string;
           windDirection: string;
           shortForecast: string;
-        }) => ({
-          time: h.startTime,
-          temperature: h.temperature,
-          temperatureUnit: h.temperatureUnit,
-          windSpeed: h.windSpeed,
-          windDirection: h.windDirection,
-          shortForecast: h.shortForecast,
-        })
+        }) => {
+          const hourKey = new Date(h.startTime).toISOString().substring(0, 13);
+          const gustMps = gustByHour[hourKey];
+          const gustMph = gustMps != null ? Math.round(gustMps * 2.23694) : null;
+          return {
+            time: h.startTime,
+            temperature: h.temperature,
+            temperatureUnit: h.temperatureUnit,
+            windSpeed: h.windSpeed,
+            windDirection: h.windDirection,
+            windGust: gustMph ? `${gustMph} mph` : null,
+            shortForecast: h.shortForecast,
+          };
+        }
       ),
       forecast: periods.map((p) => ({
         name: p.name,
@@ -338,7 +361,8 @@ function parseWindsAloft(
 
   if (stations.length === 0) return null;
 
-  const altitudes = ["3,000 ft", "6,000 ft", "9,000 ft", "12,000 ft"];
+  // Only show altitudes up to 6,000 ft (relevant for paramotors)
+  const altitudes = ["3,000 ft", "6,000 ft"];
   const nearest = stations[0];
   if (!nearest) return null;
 
