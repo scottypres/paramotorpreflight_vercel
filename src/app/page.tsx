@@ -1118,15 +1118,20 @@ export default function Home() {
             {meteo && (
               <SectionCard title="Hourly Wind Forecast" icon="📊" delay={300}>
                 {(() => {
-                  // Filter to daylight hours: 1h before sunrise to 1h after sunset
+                  // Show daylight hours within 2h ago to 24h forward
                   const ONE_HOUR = 60 * 60 * 1000;
                   const now = Date.now();
+                  const windowStart = now - 2 * ONE_HOUR;
+                  const windowEnd = now + 24 * ONE_HOUR;
 
-                  // Build filtered indices (daylight hours only)
+                  // Build filtered indices: within time window AND within daylight (1h before sunrise to 1h after sunset)
                   const dayIndices: number[] = [];
                   for (let i = 0; i < meteo.hours.length; i++) {
                     const h = meteo.hours[i];
                     const t = new Date(h.time).getTime();
+                    // Must be within the 2h ago → 24h forward window
+                    if (t < windowStart || t > windowEnd) continue;
+                    // Must be within daylight for that day
                     const sunrise = new Date(h.sunrise).getTime() - ONE_HOUR;
                     const sunset = new Date(h.sunset).getTime() + ONE_HOUR;
                     if (t >= sunrise && t <= sunset) {
@@ -1243,11 +1248,14 @@ export default function Home() {
                   const ONE_HOUR = 60 * 60 * 1000;
                   const now = Date.now();
 
-                  // Build daylight indices and store in ref for swipe handler
+                  // Build daylight indices matching the hourly table filter
+                  const windowStart = now - 2 * ONE_HOUR;
+                  const windowEnd = now + 24 * ONE_HOUR;
                   const dayIndices: number[] = [];
                   for (let i = 0; i < meteo.hours.length; i++) {
                     const h = meteo.hours[i];
                     const t = new Date(h.time).getTime();
+                    if (t < windowStart || t > windowEnd) continue;
                     const sunrise = new Date(h.sunrise).getTime() - ONE_HOUR;
                     const sunset = new Date(h.sunset).getTime() + ONE_HOUR;
                     if (t >= sunrise && t <= sunset) {
