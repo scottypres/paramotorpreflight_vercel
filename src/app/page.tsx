@@ -134,6 +134,43 @@ interface AirspaceData {
   usedFallback: boolean;
 }
 
+interface OpenMeteoHour {
+  time: string;
+  hourLabel: string;
+  isDay: boolean;
+  sunrise: string;
+  sunset: string;
+}
+
+interface OpenMeteoAltitude {
+  key: string;
+  feet: number;
+  label: string;
+  wind: { speed: number | null; directionFrom: number | null; cardinal: string | null }[];
+  temp: (number | null)[];
+}
+
+interface OpenMeteoData {
+  model: string;
+  hours: OpenMeteoHour[];
+  altitudes: OpenMeteoAltitude[];
+  surface: {
+    gusts: number[];
+    temp: number[];
+    humidity: number[];
+    dewpoint: number[];
+    visibility: (number | null)[];
+    cloudCover: number[];
+    weatherCode: number[];
+    isDay: number[];
+  };
+  daily: {
+    sunrise: string[];
+    sunset: string[];
+    dates: string[];
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
@@ -145,6 +182,13 @@ function windSpeedNumber(speed: string): number {
 
 function getWindColor(speed: string): string {
   const mph = windSpeedNumber(speed);
+  if (mph <= 8) return "text-safe";
+  if (mph <= 14) return "text-warn";
+  return "text-danger";
+}
+
+function getWindColorNum(mph: number | null): string {
+  if (mph == null) return "text-muted";
   if (mph <= 8) return "text-safe";
   if (mph <= 14) return "text-warn";
   return "text-danger";
@@ -329,6 +373,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [airspace, setAirspace] = useState<AirspaceData | null>(null);
+  const [meteo, setMeteo] = useState<OpenMeteoData | null>(null);
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -350,16 +395,14 @@ export default function Home() {
 
   // Auto-scroll hourly table to current hour when data loads
   useEffect(() => {
-    if (weather && currentHourRef.current && hourlyScrollRef.current) {
+    if (meteo && currentHourRef.current && hourlyScrollRef.current) {
       const container = hourlyScrollRef.current;
       const row = currentHourRef.current;
-      // Scroll so current hour is near the top (with some offset for context)
       const rowTop = row.offsetTop - container.offsetTop;
       container.scrollTop = Math.max(0, rowTop - row.offsetHeight);
     }
-    // Reset selected hour when new data loads
     setSelectedHourIndex(null);
-  }, [weather]);
+  }, [meteo]);
 
   // Close suggestions when clicking outside
   useEffect(() => {
@@ -439,6 +482,7 @@ export default function Home() {
     setError(null);
     setWeather(null);
     setAirspace(null);
+    setMeteo(null);
 
     try {
       const weatherRes = await fetch(weatherUrl);
@@ -451,14 +495,23 @@ export default function Home() {
       setWeather(weatherData);
 
       const { lat, lon } = weatherData.location;
-      const airspaceRes = await fetch(`/api/airspace?lat=${lat}&lon=${lon}`);
-      const airspaceData = await airspaceRes.json();
 
+      // Fetch airspace and Open-Meteo in parallel
+      const [airspaceRes, meteoRes] = await Promise.all([
+        fetch(`/api/airspace?lat=${lat}&lon=${lon}`),
+        fetch(`/api/openmeteo?lat=${lat}&lon=${lon}`),
+      ]);
+
+      const airspaceData = await airspaceRes.json();
       if (airspaceData.error) {
         throw new Error(airspaceData.error);
       }
-
       setAirspace(airspaceData);
+
+      const meteoData = await meteoRes.json();
+      if (!meteoData.error) {
+        setMeteo(meteoData);
+      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Something went wrong. Please try again."
@@ -1040,136 +1093,159 @@ export default function Home() {
               />
             </SectionCard>
 
-            {/* Hourly Wind Forecast */}
-            <SectionCard title="Hourly Wind Forecast" icon="📊" delay={300}>
-              {(() => {
-                // Filter hours to 1h before sunrise through 1h after sunset
-                const ONE_HOUR = 60 * 60 * 1000;
-                const sunriseTime = new Date(weather.sunrise).getTime() - ONE_HOUR;
-                const sunsetTime = new Date(weather.sunset).getTime() + ONE_HOUR;
+            {/* Hourly Wind Forecast (Open-Meteo) */}
+            {meteo && (
+              <SectionCard title="Hourly Wind Forecast" icon="📊" delay={300}>
+                {(() => {
+                  // Filter to daylight hours: 1h before sunrise to 1h after sunset
+                  const ONE_HOUR = 60 * 60 * 1000;
+                  const now = Date.now();
 
-                const filteredHours = weather.hourly.filter((h) => {
-                  const t = new Date(h.time).getTime();
-                  return t >= sunriseTime && t <= sunsetTime;
-                });
-
-                const displayHours = filteredHours.length > 0 ? filteredHours : weather.hourly.slice(0, 12);
-
-                const sunriseLocal = new Date(weather.sunrise).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-                const sunsetLocal = new Date(weather.sunset).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-
-                // Find the index of the current hour (closest to now)
-                const now = Date.now();
-                let currentIdx = 0;
-                for (let i = 0; i < displayHours.length; i++) {
-                  if (new Date(displayHours[i].time).getTime() <= now) {
-                    currentIdx = i;
+                  // Build filtered indices (daylight hours only)
+                  const dayIndices: number[] = [];
+                  for (let i = 0; i < meteo.hours.length; i++) {
+                    const h = meteo.hours[i];
+                    const t = new Date(h.time).getTime();
+                    const sunrise = new Date(h.sunrise).getTime() - ONE_HOUR;
+                    const sunset = new Date(h.sunset).getTime() + ONE_HOUR;
+                    if (t >= sunrise && t <= sunset) {
+                      dayIndices.push(i);
+                    }
                   }
-                }
 
-                return (
-                  <>
-                    <div className="flex gap-4 mb-3 text-xs text-muted">
-                      <span>Sunrise: <span className="text-warn font-semibold">{sunriseLocal}</span></span>
-                      <span>Sunset: <span className="text-orange font-semibold">{sunsetLocal}</span></span>
-                    </div>
-                    <div
-                      ref={hourlyScrollRef}
-                      className="overflow-y-auto max-h-[320px]"
-                    >
-                      <table className="w-full text-sm">
-                        <thead className="sticky top-0 bg-card z-10">
-                          <tr className="border-b border-card-border">
-                            <th className="text-left py-2 px-2 text-muted font-medium">Time</th>
-                            <th className="text-left py-2 px-2 text-muted font-medium">Wind</th>
-                            <th className="text-left py-2 px-2 text-muted font-medium">Gusts</th>
-                            <th className="text-left py-2 px-2 text-muted font-medium">Dir</th>
-                            <th className="text-right py-2 px-2 text-muted font-medium">Temp</th>
-                            <th className="text-left py-2 px-2 text-muted font-medium">Forecast</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {displayHours.map((h, i) => {
-                            const isNow = i === currentIdx;
-                            const isSelected = selectedHourIndex === i;
-                            return (
-                              <tr
-                                key={i}
-                                ref={isNow ? currentHourRef : undefined}
-                                onClick={() => setSelectedHourIndex(isSelected ? null : i)}
-                                className={`border-b border-card-border last:border-0 cursor-pointer transition-colors ${
-                                  isSelected
-                                    ? "bg-sky/15 border-sky/30"
-                                    : isNow
-                                    ? "bg-sky/5"
-                                    : "hover:bg-card-border/30"
-                                }`}
-                              >
-                                <td className={`py-2 px-2 font-medium whitespace-nowrap ${isNow ? "text-sky" : ""}`}>
-                                  {formatHour(h.time)}{isNow ? " *" : ""}
-                                </td>
-                                <td className={`py-2 px-2 font-bold ${getWindColor(h.windSpeed)}`}>{h.windSpeed}</td>
-                                <td className={`py-2 px-2 ${h.windGust ? getWindColor(h.windGust) + " font-bold" : "text-muted"}`}>
-                                  {h.windGust || "—"}
-                                </td>
-                                <td className="py-2 px-2 whitespace-nowrap">
-                                  <span className="text-base">{directionArrow(h.windDirection)}</span> {h.windDirection}
-                                </td>
-                                <td className="py-2 px-2 text-right font-mono">{h.temperature}°{h.temperatureUnit}</td>
-                                <td className="py-2 px-2 text-muted whitespace-nowrap">
-                                  {getWeatherIcon(h.shortForecast)} {h.shortForecast}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                    <p className="text-xs text-muted mt-2">
-                      Showing 1h before sunrise to 1h after sunset. Click a row to update winds aloft. * = current hour.
-                    </p>
-                  </>
-                );
-              })()}
-            </SectionCard>
+                  // Find current hour within filtered list
+                  let currentFilteredIdx = 0;
+                  for (let fi = 0; fi < dayIndices.length; fi++) {
+                    if (new Date(meteo.hours[dayIndices[fi]].time).getTime() <= now) {
+                      currentFilteredIdx = fi;
+                    }
+                  }
 
-            {/* Winds Aloft */}
-            {weather.windsAloft && (
+                  // Sunrise/sunset from today
+                  const sunriseLocal = new Date(meteo.daily.sunrise[0]).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+                  const sunsetLocal = new Date(meteo.daily.sunset[0]).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+
+                  // Surface altitude row (10m) for wind data
+                  const sfc = meteo.altitudes[0]; // 10m surface
+
+                  return (
+                    <>
+                      <div className="flex gap-4 mb-3 text-xs text-muted">
+                        <span>Sunrise: <span className="text-warn font-semibold">{sunriseLocal}</span></span>
+                        <span>Sunset: <span className="text-orange font-semibold">{sunsetLocal}</span></span>
+                      </div>
+                      <div
+                        ref={hourlyScrollRef}
+                        className="overflow-y-auto max-h-[320px]"
+                      >
+                        <table className="w-full text-sm">
+                          <thead className="sticky top-0 bg-card z-10">
+                            <tr className="border-b border-card-border">
+                              <th className="text-left py-2 px-2 text-muted font-medium">Time</th>
+                              <th className="text-left py-2 px-2 text-muted font-medium">Wind</th>
+                              <th className="text-left py-2 px-2 text-muted font-medium">Gusts</th>
+                              <th className="text-left py-2 px-2 text-muted font-medium">Dir</th>
+                              <th className="text-right py-2 px-2 text-muted font-medium">Temp</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dayIndices.map((gi, fi) => {
+                              const h = meteo.hours[gi];
+                              const wind = sfc.wind[gi];
+                              const gust = meteo.surface.gusts[gi];
+                              const temp = meteo.surface.temp[gi];
+                              const isNow = fi === currentFilteredIdx;
+                              const isSelected = selectedHourIndex === fi;
+
+                              return (
+                                <tr
+                                  key={gi}
+                                  ref={isNow ? currentHourRef : undefined}
+                                  onClick={() => setSelectedHourIndex(isSelected ? null : fi)}
+                                  className={`border-b border-card-border last:border-0 cursor-pointer transition-colors ${
+                                    isSelected
+                                      ? "bg-sky/15 border-sky/30"
+                                      : isNow
+                                      ? "bg-sky/5"
+                                      : "hover:bg-card-border/30"
+                                  }`}
+                                >
+                                  <td className={`py-2 px-2 font-medium whitespace-nowrap ${isNow ? "text-sky" : ""}`}>
+                                    {h.hourLabel}{isNow ? " *" : ""}
+                                  </td>
+                                  <td className={`py-2 px-2 font-bold ${getWindColorNum(wind.speed)}`}>
+                                    {wind.speed != null ? `${Math.round(wind.speed)} mph` : "—"}
+                                  </td>
+                                  <td className={`py-2 px-2 ${gust != null ? getWindColorNum(gust) + " font-bold" : "text-muted"}`}>
+                                    {gust != null ? `${Math.round(gust)} mph` : "—"}
+                                  </td>
+                                  <td className="py-2 px-2 whitespace-nowrap">
+                                    {wind.cardinal ? (
+                                      <><span className="text-base">{directionArrow(wind.cardinal)}</span> {wind.cardinal}</>
+                                    ) : "—"}
+                                  </td>
+                                  <td className="py-2 px-2 text-right font-mono">
+                                    {temp != null ? `${Math.round(temp)}°F` : "—"}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="text-xs text-muted mt-2">
+                        1h before sunrise to 1h after sunset. Click a row to update winds aloft. * = current hour.
+                      </p>
+                    </>
+                  );
+                })()}
+              </SectionCard>
+            )}
+
+            {/* Winds Aloft (Open-Meteo pressure levels) */}
+            {meteo && (
               <SectionCard title="Winds Aloft" icon="🌬️" delay={400}>
                 {(() => {
-                  // Build display data: if an hour is selected, override surface wind
                   const ONE_HOUR = 60 * 60 * 1000;
-                  const sunriseTime = new Date(weather.sunrise).getTime() - ONE_HOUR;
-                  const sunsetTime = new Date(weather.sunset).getTime() + ONE_HOUR;
-                  const filteredForSelection = weather.hourly.filter((h) => {
+                  const now = Date.now();
+
+                  // Re-derive daylight indices to map selectedHourIndex back to global index
+                  const dayIndices: number[] = [];
+                  for (let i = 0; i < meteo.hours.length; i++) {
+                    const h = meteo.hours[i];
                     const t = new Date(h.time).getTime();
-                    return t >= sunriseTime && t <= sunsetTime;
-                  });
-                  const displayForSelection = filteredForSelection.length > 0 ? filteredForSelection : weather.hourly.slice(0, 12);
-                  const selectedHour = selectedHourIndex != null ? displayForSelection[selectedHourIndex] : null;
+                    const sunrise = new Date(h.sunrise).getTime() - ONE_HOUR;
+                    const sunset = new Date(h.sunset).getTime() + ONE_HOUR;
+                    if (t >= sunrise && t <= sunset) {
+                      dayIndices.push(i);
+                    }
+                  }
 
-                  const aloftRows = selectedHour
-                    ? [
-                        {
-                          altitude: "Surface",
-                          wind: `${selectedHour.windDirection} at ${selectedHour.windSpeed}`,
-                          temp: `${selectedHour.temperature}°${selectedHour.temperatureUnit}`,
-                        },
-                        ...weather.windsAloft.filter((w) => w.altitude !== "Surface"),
-                      ]
-                    : weather.windsAloft;
+                  // Determine which global hour index to use
+                  let hourIdx: number;
+                  if (selectedHourIndex != null && dayIndices[selectedHourIndex] != null) {
+                    hourIdx = dayIndices[selectedHourIndex];
+                  } else {
+                    // Default to current hour
+                    hourIdx = 0;
+                    for (let i = 0; i < meteo.hours.length; i++) {
+                      if (new Date(meteo.hours[i].time).getTime() <= now) {
+                        hourIdx = i;
+                      }
+                    }
+                  }
 
-                  const timeLabel = selectedHour
-                    ? formatHour(selectedHour.time)
+                  const timeLabel = selectedHourIndex != null
+                    ? meteo.hours[dayIndices[selectedHourIndex]]?.hourLabel || "—"
                     : "Now";
 
                   return (
                     <>
                       <div className="flex items-center justify-between mb-3">
                         <p className="text-xs text-muted">
-                          Wind speed and direction at different altitudes.
+                          Wind speed, direction, and temperature at different altitudes.
                         </p>
-                        <span className={`text-xs font-semibold px-2 py-0.5 rounded ${selectedHour ? "bg-sky/15 text-sky" : "text-muted"}`}>
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded ${selectedHourIndex != null ? "bg-sky/15 text-sky" : "text-muted"}`}>
                           {timeLabel}
                         </span>
                       </div>
@@ -1184,33 +1260,30 @@ export default function Home() {
                             </tr>
                           </thead>
                           <tbody>
-                            {aloftRows.map((w, i) => {
-                              const match = w.wind.match(/^(\S+)\s+at\s+(.+)$/);
-                              const dir = match ? match[1] : "";
-                              const speed = match ? match[2] : w.wind;
-                              const speedNum = speed.match(/(\d+)/);
-                              const colorClass = speedNum ? getWindColor(speed) : "text-muted";
-                              const isSurface = w.altitude === "Surface";
+                            {meteo.altitudes.map((alt, ai) => {
+                              const w = alt.wind[hourIdx];
+                              const temp = alt.temp[hourIdx];
+                              const isSurface = ai === 0;
 
                               return (
-                                <tr key={i} className={`border-b border-card-border last:border-0 ${isSurface ? "bg-sky/5" : ""}`}>
+                                <tr key={alt.key} className={`border-b border-card-border last:border-0 ${isSurface ? "bg-sky/5" : ""}`}>
                                   <td className={`py-2.5 px-2 font-medium ${isSurface ? "text-sky" : ""}`}>
-                                    {w.altitude}
+                                    {alt.label}
                                   </td>
-                                  <td className={`py-2.5 px-2 font-bold ${colorClass}`}>
-                                    {speed}
+                                  <td className={`py-2.5 px-2 font-bold ${getWindColorNum(w?.speed)}`}>
+                                    {w?.speed != null ? `${Math.round(w.speed)} mph` : "—"}
                                   </td>
                                   <td className="py-2.5 px-2">
-                                    {dir ? (
+                                    {w?.cardinal ? (
                                       <span>
-                                        <span className="text-base">{directionArrow(dir)}</span> {dir}
+                                        <span className="text-base">{directionArrow(w.cardinal)}</span> {w.cardinal}
                                       </span>
                                     ) : (
                                       <span className="text-muted">—</span>
                                     )}
                                   </td>
                                   <td className="py-2.5 px-2 text-right font-mono">
-                                    {w.temp || <span className="text-muted">—</span>}
+                                    {temp != null ? `${Math.round(temp)}°F` : "—"}
                                   </td>
                                 </tr>
                               );
@@ -1219,7 +1292,7 @@ export default function Home() {
                         </table>
                       </div>
                       <p className="text-xs text-muted mt-2">
-                        All speeds in mph.{selectedHour ? " Click the selected hour again to reset to current conditions." : " Click an hour above to see winds for that time."}
+                        All speeds in mph. Data from Open-Meteo GFS model.{selectedHourIndex != null ? " Click the selected hour again to reset." : " Click an hour above to see winds for that time."}
                       </p>
                     </>
                   );
