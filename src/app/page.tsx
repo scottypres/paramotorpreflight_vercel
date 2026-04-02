@@ -381,6 +381,8 @@ export default function Home() {
   const [selectedHourIndex, setSelectedHourIndex] = useState<number | null>(null);
   const hourlyScrollRef = useRef<HTMLDivElement>(null);
   const currentHourRef = useRef<HTMLTableRowElement>(null);
+  const touchStartX = useRef<number | null>(null);
+  const dayIndicesRef = useRef<number[]>([]);
 
   // Autocomplete state
   const [suggestions, setSuggestions] = useState<{ label: string; full: string; lat: number; lon: number }[]>([]);
@@ -1223,7 +1225,7 @@ export default function Home() {
                   const ONE_HOUR = 60 * 60 * 1000;
                   const now = Date.now();
 
-                  // Re-derive daylight indices to map selectedHourIndex back to global index
+                  // Build daylight indices and store in ref for swipe handler
                   const dayIndices: number[] = [];
                   for (let i = 0; i < meteo.hours.length; i++) {
                     const h = meteo.hours[i];
@@ -1234,36 +1236,95 @@ export default function Home() {
                       dayIndices.push(i);
                     }
                   }
+                  dayIndicesRef.current = dayIndices;
+
+                  // Find current hour within daylight indices (for default & swipe starting point)
+                  let currentDayIdx = 0;
+                  for (let fi = 0; fi < dayIndices.length; fi++) {
+                    if (new Date(meteo.hours[dayIndices[fi]].time).getTime() <= now) {
+                      currentDayIdx = fi;
+                    }
+                  }
 
                   // Determine which global hour index to use
                   let hourIdx: number;
                   if (selectedHourIndex != null && dayIndices[selectedHourIndex] != null) {
                     hourIdx = dayIndices[selectedHourIndex];
                   } else {
-                    // Default to current hour
-                    hourIdx = 0;
-                    for (let i = 0; i < meteo.hours.length; i++) {
-                      if (new Date(meteo.hours[i].time).getTime() <= now) {
-                        hourIdx = i;
-                      }
-                    }
+                    hourIdx = dayIndices[currentDayIdx] ?? 0;
                   }
 
                   const timeLabel = selectedHourIndex != null
                     ? meteo.hours[dayIndices[selectedHourIndex]]?.hourLabel || "—"
                     : "Now";
 
+                  // Swipe position info
+                  const effectiveIdx = selectedHourIndex ?? currentDayIdx;
+                  const canSwipeLeft = effectiveIdx < dayIndices.length - 1;
+                  const canSwipeRight = effectiveIdx > 0;
+
                   return (
                     <>
                       <div className="flex items-center justify-between mb-3">
                         <p className="text-xs text-muted">
-                          Wind speed, direction, and temperature at different altitudes.
+                          Wind at different altitudes. Swipe left/right to change hour.
                         </p>
-                        <span className={`text-xs font-semibold px-2 py-0.5 rounded ${selectedHourIndex != null ? "bg-sky/15 text-sky" : "text-muted"}`}>
-                          {timeLabel}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (canSwipeRight) {
+                                setSelectedHourIndex(effectiveIdx - 1);
+                              }
+                            }}
+                            disabled={!canSwipeRight}
+                            className="text-muted hover:text-foreground disabled:opacity-30 text-sm px-1"
+                            aria-label="Previous hour"
+                          >
+                            ◀
+                          </button>
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded ${selectedHourIndex != null ? "bg-sky/15 text-sky" : "text-muted"}`}>
+                            {timeLabel}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (canSwipeLeft) {
+                                setSelectedHourIndex(effectiveIdx + 1);
+                              }
+                            }}
+                            disabled={!canSwipeLeft}
+                            className="text-muted hover:text-foreground disabled:opacity-30 text-sm px-1"
+                            aria-label="Next hour"
+                          >
+                            ▶
+                          </button>
+                        </div>
                       </div>
-                      <div className="overflow-x-auto">
+                      <div
+                        className="overflow-x-auto"
+                        onTouchStart={(e) => {
+                          touchStartX.current = e.touches[0].clientX;
+                        }}
+                        onTouchEnd={(e) => {
+                          if (touchStartX.current == null) return;
+                          const diff = touchStartX.current - e.changedTouches[0].clientX;
+                          touchStartX.current = null;
+                          const SWIPE_THRESHOLD = 50;
+                          if (Math.abs(diff) < SWIPE_THRESHOLD) return;
+
+                          const di = dayIndicesRef.current;
+                          const curIdx = selectedHourIndex ?? currentDayIdx;
+
+                          if (diff > 0 && curIdx < di.length - 1) {
+                            // Swiped left → next hour
+                            setSelectedHourIndex(curIdx + 1);
+                          } else if (diff < 0 && curIdx > 0) {
+                            // Swiped right → previous hour
+                            setSelectedHourIndex(curIdx - 1);
+                          }
+                        }}
+                      >
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b border-card-border">
@@ -1306,7 +1367,7 @@ export default function Home() {
                         </table>
                       </div>
                       <p className="text-xs text-muted mt-2">
-                        All speeds in mph. Data from Open-Meteo GFS model.{selectedHourIndex != null ? " Click the selected hour again to reset." : " Click an hour above to see winds for that time."}
+                        All speeds in mph.{selectedHourIndex != null ? " Click the selected hour again to reset." : ""}
                       </p>
                     </>
                   );
