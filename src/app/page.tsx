@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, FormEvent } from "react";
+import React, { useState, useEffect, useCallback, useRef, FormEvent } from "react";
 import dynamic from "next/dynamic";
 
 const AirspaceMap = dynamic(() => import("@/components/AirspaceMap"), {
@@ -137,6 +137,7 @@ interface AirspaceData {
 interface OpenMeteoHour {
   time: string;
   hourLabel: string;
+  dateLabel: string;
   isDay: boolean;
   sunrise: string;
   sunset: string;
@@ -220,7 +221,11 @@ function getVisibilityColor(vis: string | null): string {
 
 function formatHour(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleTimeString("en-US", { hour: "numeric", hour12: true });
+  const h = d.getHours();
+  if (h === 0) return "12 AM";
+  if (h === 12) return "12 PM";
+  if (h < 12) return `${h} AM`;
+  return `${h - 12} PM`;
 }
 
 function getWeatherIcon(forecast: string): string {
@@ -1173,37 +1178,50 @@ export default function Home() {
                               const isNow = fi === currentFilteredIdx;
                               const isSelected = selectedHourIndex === fi;
 
+                              // Show date header when date changes
+                              const prevGi = fi > 0 ? dayIndices[fi - 1] : -1;
+                              const prevDate = prevGi >= 0 ? meteo.hours[prevGi].dateLabel : "";
+                              const showDate = h.dateLabel !== prevDate;
+
                               return (
-                                <tr
-                                  key={gi}
-                                  ref={isNow ? currentHourRef : undefined}
-                                  onClick={() => setSelectedHourIndex(isSelected ? null : fi)}
-                                  className={`border-b border-card-border last:border-0 cursor-pointer transition-colors ${
-                                    isSelected
-                                      ? "bg-sky/15 border-sky/30"
-                                      : isNow
-                                      ? "bg-sky/5"
-                                      : "hover:bg-card-border/30"
-                                  }`}
-                                >
-                                  <td className={`py-2 px-2 font-medium whitespace-nowrap ${isNow ? "text-sky" : ""}`}>
-                                    {h.hourLabel}{isNow ? " *" : ""}
-                                  </td>
-                                  <td className={`py-2 px-2 font-bold ${getWindColorNum(wind.speed)}`}>
-                                    {wind.speed != null ? `${Math.round(wind.speed)} mph` : "—"}
-                                  </td>
-                                  <td className={`py-2 px-2 ${gust != null ? getWindColorNum(gust) + " font-bold" : "text-muted"}`}>
-                                    {gust != null ? `${Math.round(gust)} mph` : "—"}
-                                  </td>
-                                  <td className="py-2 px-2 whitespace-nowrap">
-                                    {wind.cardinal ? (
-                                      <><span className="text-base">{directionArrow(wind.cardinal)}</span> {wind.cardinal}</>
-                                    ) : "—"}
-                                  </td>
-                                  <td className="py-2 px-2 text-right font-mono">
-                                    {temp != null ? `${Math.round(temp)}°F` : "—"}
-                                  </td>
-                                </tr>
+                                <React.Fragment key={gi}>
+                                  {showDate && (
+                                    <tr className="bg-card-border/20">
+                                      <td colSpan={5} className="py-1.5 px-2 text-xs font-semibold text-muted">
+                                        {h.dateLabel}
+                                      </td>
+                                    </tr>
+                                  )}
+                                  <tr
+                                    ref={isNow ? currentHourRef : undefined}
+                                    onClick={() => setSelectedHourIndex(isSelected ? null : fi)}
+                                    className={`border-b border-card-border last:border-0 cursor-pointer transition-colors ${
+                                      isSelected
+                                        ? "bg-sky/15 border-sky/30"
+                                        : isNow
+                                        ? "bg-sky/5"
+                                        : "hover:bg-card-border/30"
+                                    }`}
+                                  >
+                                    <td className={`py-2 px-2 font-medium whitespace-nowrap ${isNow ? "text-sky" : ""}`}>
+                                      {h.hourLabel}{isNow ? " *" : ""}
+                                    </td>
+                                    <td className={`py-2 px-2 font-bold ${getWindColorNum(wind.speed)}`}>
+                                      {wind.speed != null ? `${Math.round(wind.speed)} mph` : "—"}
+                                    </td>
+                                    <td className={`py-2 px-2 ${gust != null ? getWindColorNum(gust) + " font-bold" : "text-muted"}`}>
+                                      {gust != null ? `${Math.round(gust)} mph` : "—"}
+                                    </td>
+                                    <td className="py-2 px-2 whitespace-nowrap">
+                                      {wind.cardinal ? (
+                                        <><span className="text-base">{directionArrow(wind.cardinal)}</span> {wind.cardinal}</>
+                                      ) : "—"}
+                                    </td>
+                                    <td className="py-2 px-2 text-right font-mono">
+                                      {temp != null ? `${Math.round(temp)}°F` : "—"}
+                                    </td>
+                                  </tr>
+                                </React.Fragment>
                               );
                             })}
                           </tbody>

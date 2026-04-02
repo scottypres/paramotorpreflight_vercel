@@ -31,10 +31,17 @@ function degreesToCardinal(deg: number): string {
 function formatHourLabel(iso: string): string {
   const d = new Date(iso);
   const h = d.getHours();
-  if (h === 0) return "12A";
-  if (h === 12) return "12P";
-  if (h < 12) return `${h}A`;
-  return `${h - 12}P`;
+  if (h === 0) return "12 AM";
+  if (h === 12) return "12 PM";
+  if (h < 12) return `${h} AM`;
+  return `${h - 12} PM`;
+}
+
+function formatDateLabel(iso: string): string {
+  const d = new Date(iso);
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -114,6 +121,7 @@ export async function GET(request: NextRequest) {
       return {
         time: t,
         hourLabel: formatHourLabel(t),
+        dateLabel: formatDateLabel(t),
         isDay,
         sunrise,
         sunset,
