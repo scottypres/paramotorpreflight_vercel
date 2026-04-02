@@ -376,6 +376,7 @@ export default function Home() {
   const [meteo, setMeteo] = useState<OpenMeteoData | null>(null);
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAirspaceDetails, setShowAirspaceDetails] = useState(false);
 
   const [selectedHourIndex, setSelectedHourIndex] = useState<number | null>(null);
   const hourlyScrollRef = useRef<HTMLDivElement>(null);
@@ -968,31 +969,44 @@ export default function Home() {
                 </div>
               )}
 
-              <DataRow label="Restrictions" value={airspace.restrictions} />
-              {airspace.nearestAirport && (
-                <DataRow
-                  label="Nearest Airport"
-                  value={airspace.nearestAirport}
-                  subtext={`${airspace.distanceNm} NM away`}
-                />
-              )}
-              <DataRow label="Recommendation" value={airspace.recommendation} />
+              <button
+                type="button"
+                onClick={() => setShowAirspaceDetails(!showAirspaceDetails)}
+                className="w-full flex items-center justify-between text-sm font-medium text-muted hover:text-foreground transition-colors mt-2 py-2"
+              >
+                <span>Additional Info</span>
+                <span className="text-xs">{showAirspaceDetails ? "▲" : "▼"}</span>
+              </button>
 
-              {airspace.airports?.length > 0 && (
-                <div className="mt-4">
-                  <p className="text-xs text-muted mb-2 font-medium">
-                    NEARBY AIRPORTS
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {airspace.airports.map((a) => (
-                      <span
-                        key={a.ident}
-                        className="text-xs bg-background rounded-lg px-2.5 py-1.5 border border-card-border"
-                      >
-                        {a.ident} - {a.distance} NM
-                      </span>
-                    ))}
-                  </div>
+              {showAirspaceDetails && (
+                <div className="pt-2 border-t border-card-border space-y-0">
+                  <DataRow label="Restrictions" value={airspace.restrictions} />
+                  {airspace.nearestAirport && (
+                    <DataRow
+                      label="Nearest Airport"
+                      value={airspace.nearestAirport}
+                      subtext={`${airspace.distanceNm} NM away`}
+                    />
+                  )}
+                  <DataRow label="Recommendation" value={airspace.recommendation} />
+
+                  {airspace.airports?.length > 0 && (
+                    <div className="mt-4 pt-2">
+                      <p className="text-xs text-muted mb-2 font-medium">
+                        NEARBY AIRPORTS
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {airspace.airports.map((a) => (
+                          <span
+                            key={a.ident}
+                            className="text-xs bg-background rounded-lg px-2.5 py-1.5 border border-card-border"
+                          >
+                            {a.ident} - {a.distance} NM
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
