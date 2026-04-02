@@ -1404,12 +1404,10 @@ export default function Home() {
             {/* Extended Forecast */}
             <SectionCard title="Extended Forecast" icon="📅" delay={500}>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {weather.forecast.map((p, i) => (
+                {weather.forecast.filter((p) => p.isDaytime).map((p, i) => (
                   <div
                     key={i}
-                    className={`rounded-xl bg-background border border-card-border p-4 ${
-                      !p.isDaytime ? "opacity-70" : ""
-                    }`}
+                    className="rounded-xl bg-background border border-card-border p-4"
                   >
                     <div className="flex justify-between items-start mb-2">
                       <p className="font-semibold text-sm">{p.name}</p>
